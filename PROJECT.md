@@ -33,7 +33,7 @@ Defaults from `~/src/CLAUDE.md` (Vite + React 19 + Vercel) **do not apply** — 
 - **State:** Zustand (or Jotai) — small, no boilerplate. No Redux.
 - **Data persistence:** SQLite via `expo-sqlite` for local projects/history. No cloud DB for Cycle 1.
 - **Camera/photos:** `expo-camera` + `expo-image-picker`
-- **Vision LLM:** BYOK — user supplies an OpenAI or Anthropic API key in settings. v1 supports both providers behind a provider-agnostic adapter. **See Open Questions for which to ship first.**
+- **Vision LLM:** BYOK — user supplies an OpenAI API key in settings. v1 is OpenAI-only (`gpt-4o`). Provider-agnostic adapter is still scaffolded in code so Anthropic can be added in a later cycle without refactoring.
 - **Backend:** Thin Cloudflare Workers proxy. Receives `{userApiKey, imageData, goal}` from the app, attaches our tuned system prompt server-side, forwards to OpenAI/Anthropic. Never persists the user's key. **Why a proxy at all under BYOK:** keeps the system prompts off the device — they're the moat, not the model.
 - **Amazon integration (Cycle 2):** generate Amazon search URLs from LLM-extracted item names. No PA API, no Associates signup, no scraping. Richer PA-API-based product cards deferred to a later cycle once we know users actually tap the items.
 
@@ -58,8 +58,9 @@ Each cycle ships as a feature branch → PR → TestFlight build her phone can i
 - [ ] Tapping a project re-opens its plan. She can ask follow-ups (chat-style continuation).
 
 **Scope:**
-- BYOK from day one. First-run flow: pick provider (OpenAI / Anthropic), paste API key, key stored in iOS Keychain.
-- Provider-agnostic adapter so swapping/adding providers is one file later.
+- BYOK from day one. First-run flow: paste OpenAI API key, key stored in iOS Keychain.
+- Onboarding screen includes a link to OpenAI's billing dashboard with instructions to set a hard spend limit (Spruce does not enforce caps — we rely on the provider's own).
+- Provider-agnostic adapter scaffolded but only OpenAI implementation wired in v1. Anthropic added in a later cycle without refactor.
 - One tuned system prompt (served from the Cloudflare Workers proxy, not bundled in the app).
 - LLM returns structured JSON: `{vibe, key_changes[], items[]}`. Rendered as a styled plan view.
 - Local SQLite for projects + photo blobs. No cloud sync.
@@ -112,18 +113,19 @@ Each cycle ships as a feature branch → PR → TestFlight build her phone can i
 
 ## Open questions
 
-Decisions locked from the first pass:
+Decisions locked:
 - ✅ **Distribution = BYOK** (user supplies API key, user pays the provider).
 - ✅ **Backend = thin Cloudflare Workers proxy** (no key storage, system-prompt injection only — protects prompt IP).
+- ✅ **Provider in v1 = OpenAI only (`gpt-4o`)**, provider-agnostic adapter scaffolded for Anthropic later.
 - ✅ **Amazon in Cycle 2 = search URLs only**, no PA API / Associates until validated.
+- ✅ **Cost guardrails = trust OpenAI's own** (direct users to set hard spend limits in OpenAI dashboard during onboarding; Spruce enforces nothing).
 - ✅ **ChatGPT Plus subscription cannot be used for API access** — irrelevant given BYOK.
 
-Still open:
+Deferred (will revisit when relevant):
 
-- [ ] **Which LLM providers in BYOK v1?** OpenAI-only first (simplest), Anthropic-only, or both providers behind the adapter from day one? Adding both adds maybe a day of work.
-- [ ] **Brand visuals** — deferred. Decide once we have a TestFlight build to look at (icon, palette, type). Spruce-tree direction is the obvious lean.
-- [ ] **Per-user cost guardrails** — even under BYOK, users may want a "stop after $X today" cap. Add to Cycle 1 or defer to Cycle 2?
-- [ ] **What happens on key invalid / quota exceeded?** Need a UX spec for "your OpenAI key returned 401 / 429." Defer to Cycle 1 build.
+- [ ] **Brand visuals** — icon, palette, type. Decide once we have a TestFlight build to look at. Spruce-tree direction is the obvious lean.
+- [ ] **Key invalid / quota exceeded UX** — what does the app show on 401/429 from OpenAI? Decide during Cycle 1 build (not a plan-level question).
+- [ ] **Anthropic provider** — slot in when there's signal it'd unlock real users (e.g. user feedback "I only have an Anthropic account").
 
 ## Risks / unknowns
 
