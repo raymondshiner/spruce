@@ -7,30 +7,31 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
-      "ios": {
-        "simulator": true
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleDebug"
       }
     },
     "preview": {
       "distribution": "internal",
-      "ios": {
-        "simulator": false
+      "android": {
+        "buildType": "apk"
       }
     },
-    "production-testflight": {
+    "production": {
       "distribution": "store",
       "autoIncrement": true,
-      "ios": {
-        "resourceClass": "m-medium"
+      "android": {
+        "buildType": "app-bundle"
       }
     }
   },
   "submit": {
-    "production-testflight": {
-      "ios": {
-        "appleId": "TODO_RAYMOND_APPLE_ID",
-        "ascAppId": "TODO_APP_STORE_CONNECT_APP_ID",
-        "appleTeamId": "TODO_APPLE_TEAM_ID"
+    "production": {
+      "android": {
+        "serviceAccountKeyPath": "TODO_PATH_TO_PLAY_SERVICE_ACCOUNT_JSON",
+        "track": "internal",
+        "releaseStatus": "draft"
       }
     }
   }

@@ -19,7 +19,7 @@ Explicit out-of-scope to prevent scope creep:
 - **Not a social product.** No feeds, no sharing-with-strangers, no comments. Single-user or household-scale only.
 - **Not a CAD/floorplan tool.** No 3D modeling, no measurements, no room scanning. Photos in, plans out — that's the loop.
 - **Not a marketplace.** When we add Amazon links (Cycle 3), they're search URLs. We don't host listings, scrape product data, or process payments.
-- **Not a PWA.** Hard requirement: native iOS app (and Android if cheap). PWA was considered and rejected — camera UX, install ergonomics, and "this is a real app on my phone" matter for the use case.
+- **Not a PWA.** Hard requirement: native Android app. PWA was considered and rejected — camera UX, install ergonomics, and "this is a real app on my phone" matter for the use case. **iOS dropped 2026-06-22** — target user is on Android, no reason to carry Apple toolchain.
 - **Not a hosted-LLM SaaS.** We never pay for users' inference. Spruce is BYOK: user supplies API key, user pays the API provider directly. Keeps Spruce free to operate and free to share.
 - **Not an account system in v1.** BYOK + local storage means no signup, no passwords, no email. The user's API key *is* their identity.
 
@@ -27,19 +27,19 @@ Explicit out-of-scope to prevent scope creep:
 
 Defaults from `~/src/CLAUDE.md` (Vite + React 19 + Vercel) **do not apply** — that's a web stack. For native mobile:
 
-- **Repo layout:** **Single package for Cycle 1**, monorepo deferred. `src/app/` (Expo), `src/shared/` (types, USDA table, schema), `worker/` (Cloudflare Workers, deployed via its own `wrangler.toml`). Reversed from the earlier monorepo+pnpm decision after an ultrathink pass — Expo + pnpm + Metro has well-documented resolver pain (symlink hoisting, `watchFolders`, EAS `pnpm` flag) and Cycle 1 has one developer, no second consumer of `shared/`, and a tight TestFlight target. Revisit monorepo in Cycle 3+ when Cycle 2's image-gen code creates real cross-runtime shared logic.
+- **Repo layout:** **Single package for Cycle 1**, monorepo deferred. `src/app/` (Expo), `src/shared/` (types, USDA table, schema), `worker/` (Cloudflare Workers, deployed via its own `wrangler.toml`). Reversed from the earlier monorepo+pnpm decision after an ultrathink pass — Expo + pnpm + Metro has well-documented resolver pain (symlink hoisting, `watchFolders`, EAS `pnpm` flag) and Cycle 1 has one developer, no second consumer of `shared/`, and a tight ship target. Revisit monorepo in Cycle 3+ when Cycle 2's image-gen code creates real cross-runtime shared logic.
 - **Framework:** Expo (React Native) + Expo Router
-- **Build/distribution:** EAS Build + EAS Submit (TestFlight for iOS distribution)
+- **Build/distribution:** EAS Build + EAS Submit (Google Play **internal testing track** for distribution)
 - **Language:** TypeScript strict
 - **State:** Zustand (single store per domain: `useSession` for API key, `useProjects` for the project list + active project). `persist` middleware for SQLite-backed state.
 - **Data persistence:** SQLite via `expo-sqlite` for projects + photo blobs + chat history. No cloud sync.
-- **Secrets storage:** iOS Keychain via `expo-secure-store` for the API key. Never AsyncStorage or SQLite for secrets.
+- **Secrets storage:** Android Keystore via `expo-secure-store` (uses EncryptedSharedPreferences backed by the Keystore on Android). Never AsyncStorage or SQLite for secrets.
 - **Camera/photos:** `expo-camera` + `expo-image-picker`
 - **Vision LLM:** BYOK — user supplies an OpenAI API key in settings. v1 is OpenAI-only (`gpt-4o`). Provider-agnostic adapter is still scaffolded in code so Anthropic can be added in a later cycle without refactoring.
 - **Backend:** Thin Cloudflare Workers proxy. Receives `{userApiKey, imageData, goal, chatHistory}` from the app, attaches our tuned system prompt server-side, forwards to OpenAI. Never persists the user's key. **Why a proxy under BYOK:** keeps the system prompts off the device — they're the moat, not the model.
 - **Amazon integration (Cycle 3):** generate Amazon search URLs from LLM-extracted item names. No PA API, no Associates signup, no scraping. PA-API-based product cards deferred to Cycle 4+ once we know users actually tap the items.
 
-**Why Expo over bare RN:** managed workflow, easy iOS builds without owning a Mac toolchain locally, OTA updates for non-native changes, every camera/image library is pre-integrated.
+**Why Expo over bare RN:** managed workflow, EAS handles Android signing + AAB builds in the cloud, OTA updates for non-native changes, every camera/image library is pre-integrated.
 
 **Why not Flutter / native Swift:** Raymond is a React/TS engineer. Expo is the path of least resistance and his existing mental model carries over.
 
@@ -81,13 +81,13 @@ Two routes, shared auth + rate-limit middleware:
 - `POST /v1/plan` — Turn 1 (image + goal → `Plan`) and follow-up turns (no image → `FollowupReply`).
 - `POST /v1/visualize` — Cycle 2 image generation. Stricter rate limit.
 
-**Auth:** per-device anonymous token, generated at first run via `POST /v1/register` and stored in Keychain alongside the user's API key. Requests are HMAC-signed over `(method, path, body_sha256, timestamp, nonce)` using a per-device secret returned at registration. ±5 min timestamp window, nonce cache to block replay. Not bulletproof against a determined reverser — defense-in-depth for the casual case. **Apple App Attestation is the upgrade path** if Spruce ever opens beyond personal use; left as a backlog item but middleware shape is designed to swap auth schemes cleanly.
+**Auth:** per-device anonymous token, generated at first run via `POST /v1/register` and stored in the Keystore alongside the user's API key. Requests are HMAC-signed over `(method, path, body_sha256, timestamp, nonce)` using a per-device secret returned at registration. ±5 min timestamp window, nonce cache to block replay. Not bulletproof against a determined reverser — defense-in-depth for the casual case. **Google Play Integrity API is the upgrade path** if Spruce ever opens beyond personal use; left as a backlog item but middleware shape is designed to swap auth schemes cleanly.
 
 **Rate limits (Worker-enforced, per device, KV-backed):** 60 req/hour and 500 req/day for `/v1/plan`; 10 req/hour and 40 req/day for `/v1/visualize`. Tunable via Worker env vars. These are *prompt-abuse and runaway-loop* guards, not OpenAI spend caps (still the user's job).
 
 **Server-side injection (never client):** system prompt, JSON schema for structured output, `response_format` config, model name. Client sends only `{messages, photoData?, mode, projectContext?}`. The moat lives in the Worker.
 
-**Logging allowlist:** `request_id, device_id, mode, timestamp, response_code, latency_ms, prompt_tokens, completion_tokens`. **Never logged:** Authorization header, message content, photo bytes, response body, system prompt, vision summary. Pre-TestFlight audit step: `rg "console\.(log|info|warn|error)|env\.LOG" worker/src/` and verify no body interpolation.
+**Logging allowlist:** `request_id, device_id, mode, timestamp, response_code, latency_ms, prompt_tokens, completion_tokens`. **Never logged:** Authorization header, message content, photo bytes, response body, system prompt, vision summary. Pre-release audit step: `rg "console\.(log|info|warn|error)|env\.LOG" worker/src/` and verify no body interpolation.
 
 **Failure → client response mapping:**
 
@@ -149,7 +149,7 @@ Confirming the locked decision with one addition: source the mapping from a publ
 
 ## Cycles
 
-Each cycle ships as a feature branch → PR → TestFlight build her phone can install.
+Each cycle ships as a feature branch → PR → Play Store internal-testing-track build her phone can install.
 
 ### Cycle 1 — MVP: yard photo → plan → save
 
@@ -157,25 +157,25 @@ Each cycle ships as a feature branch → PR → TestFlight build her phone can i
 
 **Done when:**
 
-*Apple / EAS prereqs (one-time, easy to underestimate):*
-- [ ] Apple Developer Program enrolled (~$99/yr, 1-2 day approval window — start now).
-- [ ] Bundle ID `studio.spruce.app` registered in App Store Connect. App record created with placeholder icon + privacy questionnaire (BYOK + Keychain storage + no analytics + no third-party SDKs).
-- [ ] EAS Build credentials configured (Apple cert + provisioning profile, EAS-managed).
-- [ ] `app.json` set: bundle ID, name, version, icon (1024×1024 placeholder OK), splash, `NSCameraUsageDescription`, `NSPhotoLibraryUsageDescription`.
-- [ ] TestFlight internal testing group created, wife's Apple ID added as tester.
+*Google Play / EAS prereqs (one-time, easy to underestimate):*
+- [ ] Google Play Console developer account enrolled (~$25 one-time, usually approved within 48h — start now).
+- [ ] Package name `studio.spruce.app` reserved in Play Console. App record created with placeholder icon + Data Safety form (BYOK + Keystore storage + no analytics + no third-party SDKs + no data shared with third parties; user data sent to user's own OpenAI account via our proxy disclosed).
+- [ ] EAS Build credentials configured (Android upload keystore — EAS-managed).
+- [ ] `app.json` set: package name, name, version, versionCode, adaptive icon (foreground + background), splash, Android permission strings (`CAMERA`, `READ_MEDIA_IMAGES`, `INTERNET`).
+- [ ] Play Console **internal testing track** created, wife's Google account added as tester.
 
 *Core loop:*
-- [ ] App installed on her iPhone via **TestFlight** (not Expo Go — see Workflow notes).
-- [ ] First-run flow: paste OpenAI API key + enter zip code (used once to derive USDA hardiness zone). Worker registration call issues per-device token + HMAC secret, stored in Keychain alongside the user's key.
+- [ ] App installed on her Android device via **Play Store internal testing link** (not Expo Go — see Workflow notes).
+- [ ] First-run flow: paste OpenAI API key + enter zip code (used once to derive USDA hardiness zone). Worker registration call issues per-device token + HMAC secret, stored in Keystore alongside the user's key.
 - [ ] She can hit a big "+" button, capture or pick a photo of a yard/outdoor space.
-- [ ] She can **type** a one-line goal (native iOS dictation in the keyboard handles "speak" — no Whisper integration needed for Cycle 1).
+- [ ] She can **type** a one-line goal (Gboard voice-input handles "speak" — no Whisper integration needed for Cycle 1).
 - [ ] App sends image + goal + zone + tuned yard system prompt (server-side) to `gpt-4o`. LLM returns structured JSON: `{vibe, key_changes[], items[]}`. Items have plant-type awareness (plants vs. hardscape vs. furniture).
 - [ ] Plan is rendered as a styled view. Saved as a "project" with the original photo. Project list screen shows thumbnails.
 - [ ] Tapping a project re-opens its plan. She can ask **text-only follow-ups** (photo-once model — `visionSummary` injected as context, photo not re-sent). **Hard cap: 10 follow-up turns per project.** At cap, input replaced with "Start a new project from this plan" CTA that clones the plan + vision summary. Chat persists across app launches.
 - [ ] Follow-up replies can return a `planPatch` (added/removed items, updated vibe) that the app applies to the local plan state.
 - [ ] Error states implemented per the Architecture table: 401 modal, 429 toasts, 5xx one-retry + tap-to-retry, schema-parse retry, offline detection.
 - [ ] Onboarding screen links to OpenAI dashboard with instructions to set a hard spend limit. Spruce enforces no caps.
-- [ ] **Pre-TestFlight audit:** `rg "console\.(log|info|warn|error)" worker/src/` confirms no message/photo/response bodies are logged. Allowlist enforced.
+- [ ] **Pre-release audit:** `rg "console\.(log|info|warn|error)" worker/src/` confirms no message/photo/response bodies are logged. Allowlist enforced.
 
 **Scope:**
 - Yard / outdoor only. Indoor mode is Cycle 4.
@@ -183,7 +183,7 @@ Each cycle ships as a feature branch → PR → TestFlight build her phone can i
 - Provider-agnostic adapter scaffolded, OpenAI implementation only.
 - Single tuned yard system prompt + JSON schema (`PlanSchema` / `FollowupReplySchema`) live server-side in the Worker, not in the app bundle.
 - Chat schema and data model per the `## Architecture (Cycle 1)` section. Persisted in SQLite.
-- iOS only. Android deferred.
+- Android only. iOS dropped 2026-06-22.
 
 **Out of scope for this cycle:**
 - Image generation (Cycle 2)
@@ -192,7 +192,7 @@ Each cycle ships as a feature branch → PR → TestFlight build her phone can i
 - Multi-user
 - Anthropic provider
 - In-app spend caps
-- Voice input via Whisper (native dictation handles voice in v1)
+- Voice input via Whisper (Gboard voice-input handles voice in v1)
 
 ### Cycle 2 — Visualize: see the change, not just read it
 
@@ -246,7 +246,7 @@ Each cycle ships as a feature branch → PR → TestFlight build her phone can i
 - **Amazon PA API integration** — Associates signup + real product cards (images, prices, ratings). Triggered when we have signal that users tap items meaningfully.
 - Voice input for goals via Whisper API (BYOK, replaces native dictation for hands-free flow)
 - Project export (PDF / share-sheet)
-- Android build (EAS makes this cheap if we want it)
+- iOS build (EAS makes this cheap if we want it later — requires Apple Developer Program enrollment)
 - Saved style preferences ("we like mid-century modern, low maintenance")
 - Household sharing (multiple devices same household, shared project list)
 - Anthropic provider in BYOK settings
@@ -264,12 +264,12 @@ Decisions locked:
 - ✅ **State management = Zustand** with `persist` middleware.
 - ✅ **Amazon in Cycle 3 = search URLs only**, no PA API / Associates until validated.
 - ✅ **Cost guardrails = trust OpenAI's own** (onboarding directs to OpenAI dashboard limits; Spruce enforces nothing).
-- ✅ **"Speak" goal input = native iOS keyboard dictation** (free, built-in). Whisper API integration deferred to backlog.
+- ✅ **"Speak" goal input = Gboard voice-input** (free, built-in on Android). Whisper API integration deferred to backlog.
 - ✅ **ChatGPT Plus subscription cannot be used for API access** — irrelevant given BYOK.
 
 Locked in the 2026-06-22 ultrathink pass:
 - ✅ **Repo layout = single package for Cycle 1** (`src/app`, `src/shared`, `worker/`). Monorepo + pnpm workspaces deferred — see `## Stack` for the reasoning. **Reverses the earlier monorepo decision** — flagged for explicit Raymond review.
-- ✅ **Worker auth = per-device anonymous token + HMAC-signed requests + replay window**. Apple App Attestation = backlog upgrade path.
+- ✅ **Worker auth = per-device anonymous token + HMAC-signed requests + replay window**. Google Play Integrity API = backlog upgrade path.
 - ✅ **Worker rate limits = 60/hr + 500/day for `/v1/plan`, 10/hr + 40/day for `/v1/visualize`** (KV-backed, env-tunable).
 - ✅ **Logging allowlist = request_id, device_id, mode, timestamp, response_code, latency_ms, token counts**. No bodies, no keys, no system prompt.
 - ✅ **Schema = `PlanSchema` + `FollowupReplySchema` in `src/shared/schema/`** with OpenAI Structured Outputs strict mode + one-retry on parse fail.
@@ -280,18 +280,18 @@ Locked in the 2026-06-22 ultrathink pass:
 
 Deferred (will revisit when relevant):
 
-- [ ] **Brand visuals** — icon, palette, type. Decide once we have a TestFlight build to look at. Spruce-tree direction is the obvious lean.
+- [ ] **Brand visuals** — icon, palette, type. Decide once we have an internal-track build to look at. Spruce-tree direction is the obvious lean.
 - [ ] **Anthropic provider** — slot in when there's signal it'd unlock real users (e.g. user feedback "I only have an Anthropic account").
-- [ ] **Apple App Attestation** — swap in for HMAC auth if Spruce ever opens beyond personal use.
+- [ ] **Google Play Integrity API** — swap in for HMAC auth if Spruce ever opens beyond personal use.
 - [ ] **Monorepo revisit** — Cycle 3+ once cross-runtime shared code becomes real.
 
 ## Risks / unknowns
 
-- **App Store review for an LLM-powered app.** Apple has tightened review of "AI assistant" apps. We're personal-use via TestFlight first — no review needed there. Don't plan for public App Store distribution.
-- **TestFlight expiry.** Builds expire every 90 days. OTA updates via EAS handle most changes, but native code changes mean a new build + reinstall.
-- **TestFlight has a 10,000-user cap on public-link beta.** Fine for now, but if Spruce goes viral via BYOK sharing, that becomes a ceiling — at which point we'd actually have to go through App Store review (or have her hate us for switching to Android-only).
+- **Play Store review for an LLM-powered app.** Google's "AI-Generated Content" policy applies — apps that generate content from AI must have an in-app reporting mechanism for offensive output. Worth surfacing in Cycle 1 UI (long-press a plan item → "Report this suggestion") even though it's a closed-test app, because review for the internal track is still policy-checked.
+- **Internal testing track expiry.** No 90-day expiry like TestFlight — Play internal testing builds don't expire. OTA updates via EAS still handle most changes; native code changes still need a new AAB upload.
+- **Internal testing track has a 100-tester cap.** Not a ceiling we'll hit for personal/household use. If Spruce ever needed >100 testers, move to closed testing (then open testing, then production) — all still pre-public, all on the same Play Console flow.
 - **BYOK onboarding friction.** Asking users to paste an API key on first run is a real drop-off. Mitigation: clear instructions screen with screenshots of where to get the key on OpenAI's site, paste-from-clipboard auto-detect, "I'll do this later" with a sample/demo mode (TBD).
-- **User's API key leakage.** Key must live in iOS Keychain via `expo-secure-store` (not AsyncStorage, not SQLite). Cloudflare Workers proxy must never log the key — log only request shapes + provider response codes. Audit this before TestFlight.
+- **User's API key leakage.** Key must live in Android Keystore via `expo-secure-store` (not AsyncStorage, not SQLite). Cloudflare Workers proxy must never log the key — log only request shapes + provider response codes. Audit this before release.
 - **Prompt extraction via app decompile.** If we ever ship prompts client-side as a fallback, they're gone. Keep them server-side, full stop.
 - **LLM structured-output reliability.** OpenAI JSON mode helps but isn't 100%. Need a retry-on-parse-fail strategy (one retry with a "your last response wasn't valid JSON, return only the schema" follow-up). Hard fail to user only after retry also fails.
 - **Cycle 2 image gen quality.** Image-to-image with structure preservation is uneven on `gpt-image-1` as of mid-2026. Mitigation: framed as inspirational rendering, fallback plan in Cycle 2 description if quality falls short.
@@ -299,8 +299,8 @@ Deferred (will revisit when relevant):
 
 ## Workflow notes
 
-- **Dev loop:** `npx expo start` in `apps/mobile/`. Use Expo Go on her phone (or yours, or a simulator) for fast iteration. Expo Go is for development only.
-- **Cycle ship gate:** **TestFlight build via EAS**, not Expo Go. Real bundle ID, real app icon, real splash. This is what she actually keeps using and what defines "shipped."
+- **Dev loop:** `npx expo start` at the repo root. Use Expo Go on her Android phone (or yours, or an Android emulator) for fast iteration. Expo Go is for development only. On Linux dev box, mirror a real Android device into a window via `scrcpy` over USB or Wi-Fi ADB.
+- **Cycle ship gate:** **Play Store internal-testing-track build via EAS**, not Expo Go. Real package name, real app icon, real splash, signed AAB. This is what she actually keeps using and what defines "shipped."
 - **Workers proxy dev:** `wrangler dev` for local, `wrangler deploy` for prod. Free tier handles personal use; a Cloudflare account is needed.
 - **Prompt-testing strategy:** A golden-test file at `apps/proxy/test/golden/` with 5-10 anonymized yard photos + expected JSON shape (vibe present, key_changes is non-empty array, items have search_terms, etc.). Run before any prompt change via `pnpm test:golden`. Catches schema regressions cheaply. Outputs are scored by shape + presence, not literal-equality (the LLM will vary in wording).
 - **Not a `launch`-able project in the team-of-3-Smiths sense.** Expo's dev model (one packager + device/simulator) doesn't fit the 3-Smiths-sharing-a-dev-server pattern. Single Smith at a time on this repo.
