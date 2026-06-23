@@ -8,9 +8,10 @@
 #   ./scripts/dev-android.sh              # default AVD (Pixel_8_Pro)
 #   ./scripts/dev-android.sh Pixel_7      # specific AVD
 #
-# Layout: emulator floats in a right-30%-wide column, scaled to the
-# phone's portrait aspect ratio (height-bound), centered horizontally
-# within the column.
+# Layout: emulator joins the master layout as a tiled window on the
+# right, sized just wide enough to maintain the phone's portrait aspect
+# at full screen height. Smith kitty takes the rest of the column on
+# the left.
 
 set -euo pipefail
 
@@ -63,13 +64,10 @@ if command -v hyprctl >/dev/null 2>&1; then
   MON_JSON=$(hyprctl monitors -j | jq -r '.[] | select(.focused==true)')
   MW=$(echo "$MON_JSON" | jq -r '.width')
   MH=$(echo "$MON_JSON" | jq -r '.height')
-  MX=$(echo "$MON_JSON" | jq -r '.x')
-  MY=$(echo "$MON_JSON" | jq -r '.y')
   RL=$(echo "$MON_JSON" | jq -r '.reserved[0]')
   RT=$(echo "$MON_JSON" | jq -r '.reserved[1]')
   RR=$(echo "$MON_JSON" | jq -r '.reserved[2]')
   RB=$(echo "$MON_JSON" | jq -r '.reserved[3]')
-
   USABLE_W=$(( MW - RL - RR ))
   USABLE_H=$(( MH - RT - RB ))
 
@@ -80,27 +78,21 @@ if command -v hyprctl >/dev/null 2>&1; then
   DEV_H=$(grep -E '^hw\.lcd\.height=' "$AVD_INI" 2>/dev/null | cut -d= -f2)
   [[ -z "$DEV_W" || -z "$DEV_H" ]] && { DEV_W=1344; DEV_H=2992; }
 
-  # Right 30% column on the monitor.
-  COL_W=$(( USABLE_W * 30 / 100 ))
-  COL_H=$(( USABLE_H ))
-  COL_X=$(( MX + RL + USABLE_W - COL_W ))
-  COL_Y=$(( MY + RT ))
-
-  # Scale phone to fit the column, height-bound for portrait devices.
-  # Emulator window has ~32px of titlebar chrome — account for it so the
-  # rendered phone screen ends up the right aspect.
+  # Master tile width that makes the LCD render at full available height.
+  # Emulator window has ~32px of titlebar chrome above the LCD; subtract it
+  # from height before applying the device aspect ratio so the inner phone
+  # screen ends up filling vertically.
   CHROME_H=32
-  EMU_H=$COL_H
-  EMU_W=$(( (COL_H - CHROME_H) * DEV_W / DEV_H ))
-  if (( EMU_W > COL_W )); then
-    EMU_W=$COL_W
-    EMU_H=$(( EMU_W * DEV_H / DEV_W + CHROME_H ))
-  fi
-  EMU_X=$(( COL_X + (COL_W - EMU_W) / 2 ))
-  EMU_Y=$(( COL_Y + (COL_H - EMU_H) / 2 ))
+  MASTER_W=$(( (USABLE_H - CHROME_H) * DEV_W / DEV_H ))
+  # mfact is a 0..1 fraction. Compute with float precision via awk.
+  MFACT=$(awk -v w="$MASTER_W" -v u="$USABLE_W" 'BEGIN { printf "%.4f", w/u }')
 
-  # Find the emulator's main window (the one with the "Android Emulator -"
-  # title — there's a secondary toolbar window we want to push aside).
+  # Ensure master layout + orientation-right (master on the right side).
+  PREV_LAYOUT=$(hyprctl getoption -j general:layout | jq -r '.str // "dwindle"')
+  [[ "$PREV_LAYOUT" != master ]] && hyprctl keyword general:layout master >/dev/null
+  hyprctl dispatch layoutmsg orientationright >/dev/null
+
+  # Find the emulator's main window (skip the secondary toolbar window).
   EMU_ADDR=""; TOOL_ADDR=""
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     EMU_ADDR=$(hyprctl clients -j | jq -r '[.[] | select(.class=="Emulator" and (.title | startswith("Android Emulator")))][0].address // empty')
@@ -110,16 +102,25 @@ if command -v hyprctl >/dev/null 2>&1; then
   TOOL_ADDR=$(hyprctl clients -j | jq -r '[.[] | select(.class=="Emulator" and (.title=="Emulator"))][0].address // empty')
 
   if [[ -n "$EMU_ADDR" ]]; then
-    hyprctl dispatch setfloating "address:$EMU_ADDR" >/dev/null || true
-    hyprctl dispatch resizewindowpixel "exact $EMU_W $EMU_H,address:$EMU_ADDR" >/dev/null || true
-    hyprctl dispatch movewindowpixel "exact $EMU_X $EMU_Y,address:$EMU_ADDR" >/dev/null || true
-    echo "dev-android: emulator tiled to ${EMU_W}x${EMU_H} @ ${EMU_X},${EMU_Y}"
+    # Make sure it's tiled (in case a previous run / window rule floated it).
+    hyprctl dispatch settiled "address:$EMU_ADDR" >/dev/null 2>&1 || true
+    # Promote to master so it sits on the right side of the workspace.
+    hyprctl dispatch focuswindow "address:$EMU_ADDR" >/dev/null
+    sleep 0.15
+    # Only swap if we're not already master.
+    MASTER_ADDR=$(hyprctl clients -j | jq -r --arg ws "$(hyprctl activeworkspace -j | jq -r .name)" \
+      '[.[] | select(.workspace.name==$ws)] | sort_by(.at[0]) | reverse | .[0].address // empty')
+    if [[ "$MASTER_ADDR" != "$EMU_ADDR" ]]; then
+      hyprctl dispatch layoutmsg swapwithmaster master >/dev/null
+      sleep 0.15
+    fi
+    hyprctl dispatch layoutmsg "mfact exact $MFACT" >/dev/null
+    echo "dev-android: emulator tiled as master (mfact=$MFACT, ~${MASTER_W}px wide)"
   else
     echo "dev-android: warning — could not find emulator window to tile" >&2
   fi
 
-  # Toolbar sidebar: float and shove it to the top-left corner of the laptop
-  # monitor so it's out of the way but still reachable if you need it.
+  # Toolbar sidebar: float it and shove to the top-left of the laptop monitor.
   if [[ -n "$TOOL_ADDR" ]]; then
     hyprctl dispatch setfloating "address:$TOOL_ADDR" >/dev/null || true
     hyprctl dispatch movewindowpixel "exact 0 40,address:$TOOL_ADDR" >/dev/null || true
