@@ -27,7 +27,7 @@ Explicit out-of-scope to prevent scope creep:
 
 Defaults from `~/src/CLAUDE.md` (Vite + React 19 + Vercel) **do not apply** — that's a web stack. For native mobile:
 
-- **Repo layout:** Monorepo with pnpm workspaces. `apps/mobile/` (Expo app), `apps/proxy/` (Cloudflare Workers), `packages/shared/` (request/response types, zone data).
+- **Repo layout:** **Single package for Cycle 1**, monorepo deferred. `src/app/` (Expo), `src/shared/` (types, USDA table, schema), `worker/` (Cloudflare Workers, deployed via its own `wrangler.toml`). Reversed from the earlier monorepo+pnpm decision after an ultrathink pass — Expo + pnpm + Metro has well-documented resolver pain (symlink hoisting, `watchFolders`, EAS `pnpm` flag) and Cycle 1 has one developer, no second consumer of `shared/`, and a tight TestFlight target. Revisit monorepo in Cycle 3+ when Cycle 2's image-gen code creates real cross-runtime shared logic.
 - **Framework:** Expo (React Native) + Expo Router
 - **Build/distribution:** EAS Build + EAS Submit (TestFlight for iOS distribution)
 - **Language:** TypeScript strict
@@ -43,6 +43,110 @@ Defaults from `~/src/CLAUDE.md` (Vite + React 19 + Vercel) **do not apply** — 
 
 **Why not Flutter / native Swift:** Raymond is a React/TS engineer. Expo is the path of least resistance and his existing mental model carries over.
 
+## Architecture (Cycle 1)
+
+Resolutions from the 2026-06-22 ultrathink pass. These are the *how* behind the locked decisions in `## Stack` — design contracts that the Cycle 1 build depends on.
+
+### Data model
+
+```ts
+// src/shared/types/project.ts
+type Project = {
+  id: string;              // ulid
+  createdAt: number;
+  updatedAt: number;
+  mode: 'yard' | 'indoor'; // 'indoor' lands in Cycle 4
+  thumbnailUri: string;    // file://… local path to the original photo
+  photoSha256: string;     // dedup / cache key
+  zone?: string;           // USDA zone for yard mode (e.g. "7a"); room type for indoor (Cycle 4)
+  goal: string;            // user's one-line Turn 1 prompt
+
+  // Turn 1 outputs
+  visionSummary: string;   // hidden; injected as context on every follow-up
+  plan: Plan;              // see schema below
+
+  // Follow-up chat (text-only, photo-once)
+  turns: Array<{ role: 'user' | 'assistant'; content: string; createdAt: number }>;
+};
+```
+
+- Photos live on disk at `${FileSystem.documentDirectory}projects/${projectId}/original.jpg`. SQLite stores the path plus a 300px thumbnail blob for fast list rendering.
+- Turn 1 sends the photo (base64) to the Worker. After that, the photo is never re-sent — `visionSummary` is the LLM's persistent memory of it.
+- 10-turn cap = `turns.filter(t => t.role === 'user').length < 10`. At cap, input is replaced with a "Start a new project from this plan" CTA that clones `plan` + `visionSummary` into a fresh project, preserving context.
+
+### Worker proxy contract
+
+Two routes, shared auth + rate-limit middleware:
+
+- `POST /v1/plan` — Turn 1 (image + goal → `Plan`) and follow-up turns (no image → `FollowupReply`).
+- `POST /v1/visualize` — Cycle 2 image generation. Stricter rate limit.
+
+**Auth:** per-device anonymous token, generated at first run via `POST /v1/register` and stored in Keychain alongside the user's API key. Requests are HMAC-signed over `(method, path, body_sha256, timestamp, nonce)` using a per-device secret returned at registration. ±5 min timestamp window, nonce cache to block replay. Not bulletproof against a determined reverser — defense-in-depth for the casual case. **Apple App Attestation is the upgrade path** if Spruce ever opens beyond personal use; left as a backlog item but middleware shape is designed to swap auth schemes cleanly.
+
+**Rate limits (Worker-enforced, per device, KV-backed):** 60 req/hour and 500 req/day for `/v1/plan`; 10 req/hour and 40 req/day for `/v1/visualize`. Tunable via Worker env vars. These are *prompt-abuse and runaway-loop* guards, not OpenAI spend caps (still the user's job).
+
+**Server-side injection (never client):** system prompt, JSON schema for structured output, `response_format` config, model name. Client sends only `{messages, photoData?, mode, projectContext?}`. The moat lives in the Worker.
+
+**Logging allowlist:** `request_id, device_id, mode, timestamp, response_code, latency_ms, prompt_tokens, completion_tokens`. **Never logged:** Authorization header, message content, photo bytes, response body, system prompt, vision summary. Pre-TestFlight audit step: `rg "console\.(log|info|warn|error)|env\.LOG" worker/src/` and verify no body interpolation.
+
+**Failure → client response mapping:**
+
+| Upstream / Worker condition | Worker response | App behavior |
+|---|---|---|
+| OpenAI 401 (bad key) | `401 {error: 'invalid_key'}` | Full-screen modal: "OpenAI rejected your key" + Settings deep-link |
+| OpenAI 429 (user quota/rate) | `429 {error: 'quota_exceeded'}` | Toast + link to platform.openai.com/usage. No auto-retry. |
+| OpenAI 5xx / timeout | `502 {error: 'upstream_unavailable'}` | One auto-retry @ 1s backoff, then inline "Tap to retry" |
+| Worker rate limit hit | `429 {error: 'spruce_rate_limit', retry_after_s}` | Toast "Slow down — retry in Ns"; auto-retry after window |
+| Schema parse fail (Turn 1) | Worker retries once with "return only valid JSON", then `502 {error: 'schema_parse_fail'}` | "Plan came back malformed. Retry?" |
+
+Errors are first-class state in the `useChat` Zustand slice: `{status: 'idle' | 'sending' | 'error', error?: {kind, message, retryable}}`. UI consumes the state, never raw exceptions.
+
+**Streaming:** off for Cycle 1. Plan responses are structured JSON; partial JSON is unusable. Single-shot UX with a loading state.
+
+### Structured-output schema
+
+```ts
+// src/shared/schema/plan.ts
+import { z } from 'zod';
+
+export const ItemCategorySchema = z.enum([
+  'plant', 'hardscape', 'furniture', 'lighting', 'decor',
+]);
+
+export const PlanItemSchema = z.object({
+  name: z.string().min(1).max(80),
+  category: ItemCategorySchema,
+  searchTerms: z.string().min(3).max(120),       // Cycle 3 uses this for Amazon URLs
+  estimatedPriceRange: z.string().optional(),    // "$20-50"
+  notes: z.string().max(280).optional(),         // why it fits / alternatives
+});
+
+export const PlanSchema = z.object({
+  visionSummary: z.string().min(50).max(1500),   // HIDDEN — injected into follow-ups
+  vibe: z.string().min(20).max(400),             // 1-2 sentences shown to user
+  keyChanges: z.array(z.string().min(10).max(300)).min(2).max(7),
+  items: z.array(PlanItemSchema).min(3).max(20),
+});
+
+export const FollowupReplySchema = z.object({
+  reply: z.string().min(1).max(2000),            // markdown-rendered
+  planPatch: z.object({                          // optional surgical update
+    addedItems: z.array(PlanItemSchema).optional(),
+    removedItemNames: z.array(z.string()).optional(),
+    updatedVibe: z.string().optional(),
+  }).optional(),
+});
+```
+
+- Categories widened from the plan's "plants vs. hardscape vs. furniture" to include `lighting` and `decor` — they routinely fall out of LLM plans and deserve their own cards, especially for Cycle 3 Amazon linking. Flag for Raymond if he wants this narrower.
+- `visionSummary` is the keystone: ~200-1500 chars of detail ("south-facing 30×20 backyard, mature oak in NE corner, afternoon shade on left third, patchy lawn, wood privacy fence three sides, neighbor's house visible north…") that the LLM produces once on Turn 1 and never sees the photo again afterward.
+- Follow-ups can return a `planPatch` so the LLM can edit the plan surgically ("swap the patio set for something cheaper" → reply + `removedItemNames: ['Acacia Lounge Set'] + addedItems: [...]`). App applies the patch to local state.
+- OpenAI Structured Outputs config: `response_format: { type: 'json_schema', json_schema: { name: 'plan', schema: <zod-to-json-schema>, strict: true } }`. On parse fail: one retry with a tightening system message, then user-visible error.
+
+### USDA zone derivation
+
+Confirming the locked decision with one addition: source the mapping from a public dataset (USDA / plantmaps-derived), vendor as `src/shared/data/usda-zones.json` (~40KB, ~42k zips). `zipToZone(zip: string): string | null`. For non-US zips, app shows: "Spruce is yard-tuned for US plant zones. Indoor mode (Cycle 4) works anywhere." — door open for a "Set zone manually" fallback later.
+
 ## Cycles
 
 Each cycle ships as a feature branch → PR → TestFlight build her phone can install.
@@ -52,21 +156,33 @@ Each cycle ships as a feature branch → PR → TestFlight build her phone can i
 **Theme:** The core loop, end to end, yard-first, single user.
 
 **Done when:**
+
+*Apple / EAS prereqs (one-time, easy to underestimate):*
+- [ ] Apple Developer Program enrolled (~$99/yr, 1-2 day approval window — start now).
+- [ ] Bundle ID `studio.spruce.app` registered in App Store Connect. App record created with placeholder icon + privacy questionnaire (BYOK + Keychain storage + no analytics + no third-party SDKs).
+- [ ] EAS Build credentials configured (Apple cert + provisioning profile, EAS-managed).
+- [ ] `app.json` set: bundle ID, name, version, icon (1024×1024 placeholder OK), splash, `NSCameraUsageDescription`, `NSPhotoLibraryUsageDescription`.
+- [ ] TestFlight internal testing group created, wife's Apple ID added as tester.
+
+*Core loop:*
 - [ ] App installed on her iPhone via **TestFlight** (not Expo Go — see Workflow notes).
-- [ ] First-run flow: paste OpenAI API key + enter zip code (used once to derive USDA hardiness zone).
+- [ ] First-run flow: paste OpenAI API key + enter zip code (used once to derive USDA hardiness zone). Worker registration call issues per-device token + HMAC secret, stored in Keychain alongside the user's key.
 - [ ] She can hit a big "+" button, capture or pick a photo of a yard/outdoor space.
 - [ ] She can **type** a one-line goal (native iOS dictation in the keyboard handles "speak" — no Whisper integration needed for Cycle 1).
 - [ ] App sends image + goal + zone + tuned yard system prompt (server-side) to `gpt-4o`. LLM returns structured JSON: `{vibe, key_changes[], items[]}`. Items have plant-type awareness (plants vs. hardscape vs. furniture).
 - [ ] Plan is rendered as a styled view. Saved as a "project" with the original photo. Project list screen shows thumbnails.
-- [ ] Tapping a project re-opens its plan. She can ask **text-only follow-ups** (photo-once model — photo not re-sent each turn, LLM's vision notes saved and re-used). **Hard cap: 10 follow-up turns per project.** Chat persists across app launches.
+- [ ] Tapping a project re-opens its plan. She can ask **text-only follow-ups** (photo-once model — `visionSummary` injected as context, photo not re-sent). **Hard cap: 10 follow-up turns per project.** At cap, input replaced with "Start a new project from this plan" CTA that clones the plan + vision summary. Chat persists across app launches.
+- [ ] Follow-up replies can return a `planPatch` (added/removed items, updated vibe) that the app applies to the local plan state.
+- [ ] Error states implemented per the Architecture table: 401 modal, 429 toasts, 5xx one-retry + tap-to-retry, schema-parse retry, offline detection.
 - [ ] Onboarding screen links to OpenAI dashboard with instructions to set a hard spend limit. Spruce enforces no caps.
+- [ ] **Pre-TestFlight audit:** `rg "console\.(log|info|warn|error)" worker/src/` confirms no message/photo/response bodies are logged. Allowlist enforced.
 
 **Scope:**
 - Yard / outdoor only. Indoor mode is Cycle 4.
-- Zip → USDA zone is a one-time lookup. JSON zip→zone table shipped in the Workers proxy (~40KB, no network call).
+- Zip → USDA zone is a one-time lookup via `src/shared/data/usda-zones.json` (~40KB, no network call). Non-US zip → "indoor mode (Cycle 4) works anywhere" message.
 - Provider-agnostic adapter scaffolded, OpenAI implementation only.
-- Single tuned yard system prompt (served from the proxy, not bundled in the app).
-- Chat schema: `{role, content, photoNotesRef?}`. Persisted in SQLite.
+- Single tuned yard system prompt + JSON schema (`PlanSchema` / `FollowupReplySchema`) live server-side in the Worker, not in the app bundle.
+- Chat schema and data model per the `## Architecture (Cycle 1)` section. Persisted in SQLite.
 - iOS only. Android deferred.
 
 **Out of scope for this cycle:**
@@ -145,19 +261,29 @@ Decisions locked:
 - ✅ **Cycle 2 image gen = full commit, no spike** (with fallback plan: relabel as "concept render" and reshuffle if quality falls short).
 - ✅ **Yard context capture = zip code at onboarding, LLM asks the rest inline** via natural follow-ups.
 - ✅ **Follow-up chat = photo-once + 10 turn cap + persistent**.
-- ✅ **Repo = monorepo with pnpm workspaces** (`apps/mobile`, `apps/proxy`, `packages/shared`).
 - ✅ **State management = Zustand** with `persist` middleware.
 - ✅ **Amazon in Cycle 3 = search URLs only**, no PA API / Associates until validated.
 - ✅ **Cost guardrails = trust OpenAI's own** (onboarding directs to OpenAI dashboard limits; Spruce enforces nothing).
 - ✅ **"Speak" goal input = native iOS keyboard dictation** (free, built-in). Whisper API integration deferred to backlog.
 - ✅ **ChatGPT Plus subscription cannot be used for API access** — irrelevant given BYOK.
 
+Locked in the 2026-06-22 ultrathink pass:
+- ✅ **Repo layout = single package for Cycle 1** (`src/app`, `src/shared`, `worker/`). Monorepo + pnpm workspaces deferred — see `## Stack` for the reasoning. **Reverses the earlier monorepo decision** — flagged for explicit Raymond review.
+- ✅ **Worker auth = per-device anonymous token + HMAC-signed requests + replay window**. Apple App Attestation = backlog upgrade path.
+- ✅ **Worker rate limits = 60/hr + 500/day for `/v1/plan`, 10/hr + 40/day for `/v1/visualize`** (KV-backed, env-tunable).
+- ✅ **Logging allowlist = request_id, device_id, mode, timestamp, response_code, latency_ms, token counts**. No bodies, no keys, no system prompt.
+- ✅ **Schema = `PlanSchema` + `FollowupReplySchema` in `src/shared/schema/`** with OpenAI Structured Outputs strict mode + one-retry on parse fail.
+- ✅ **Item categories widened to 5**: `plant | hardscape | furniture | lighting | decor`. Flag if narrower preferred.
+- ✅ **Error UX** — full Worker→app mapping table in `## Architecture (Cycle 1)`. 401 = modal, 429 (user) = toast + dashboard link, 429 (Spruce) = retry-after toast, 5xx = one auto-retry then tap-to-retry, offline = banner state.
+- ✅ **Bundle ID = `studio.spruce.app`** (reverse of `spruce.studio` + `.app` for clarity).
+- ✅ **Streaming = off for Cycle 1** (structured-JSON responses are not partial-renderable).
+
 Deferred (will revisit when relevant):
 
 - [ ] **Brand visuals** — icon, palette, type. Decide once we have a TestFlight build to look at. Spruce-tree direction is the obvious lean.
-- [ ] **Key invalid / quota exceeded UX** — what does the app show on 401/429 from OpenAI? Decide during Cycle 1 build (not a plan-level question).
-- [ ] **Bundle ID** — `studio.spruce` or `com.spruce.app`? Decide before first EAS build.
 - [ ] **Anthropic provider** — slot in when there's signal it'd unlock real users (e.g. user feedback "I only have an Anthropic account").
+- [ ] **Apple App Attestation** — swap in for HMAC auth if Spruce ever opens beyond personal use.
+- [ ] **Monorepo revisit** — Cycle 3+ once cross-runtime shared code becomes real.
 
 ## Risks / unknowns
 
