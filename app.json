@@ -1,0 +1,72 @@
+{
+  "expo": {
+    "name": "Spruce",
+    "slug": "spruce",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "spruce",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "studio.spruce.app",
+      "icon": "./assets/expo.icon",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Spruce uses the camera so you can take a photo of your yard or room to plan changes.",
+        "NSPhotoLibraryUsageDescription": "Spruce uses your photo library so you can pick a photo of a yard or room to plan changes.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "studio.spruce.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundImage": "./assets/images/android-icon-background.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-sqlite",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Spruce uses the camera so you can take a photo of your yard or room to plan changes."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Spruce uses your photo library so you can pick a photo of a yard or room to plan changes."
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#1f3a2b",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 96
+        }
+      ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "TODO_SET_VIA_EAS_INIT"
+      },
+      "spruceProxyUrl": "https://spruce-proxy.workers.dev"
+    },
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}

@@ -1,0 +1,25 @@
+name = "spruce-proxy"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ENV = "development"
+RATE_LIMIT_PLAN_PER_HOUR = "60"
+RATE_LIMIT_PLAN_PER_DAY = "500"
+RATE_LIMIT_VISUALIZE_PER_HOUR = "10"
+RATE_LIMIT_VISUALIZE_PER_DAY = "40"
+SIGNATURE_WINDOW_SECONDS = "300"
+
+[[kv_namespaces]]
+binding = "SPRUCE_KV"
+id = "TODO_KV_ID"
+preview_id = "TODO_KV_PREVIEW_ID"
+
+[env.production]
+[env.production.vars]
+ENV = "production"
+
+[[env.production.kv_namespaces]]
+binding = "SPRUCE_KV"
+id = "TODO_PROD_KV_ID"

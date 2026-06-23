@@ -1,0 +1,12 @@
+{
+  "_meta": {
+    "note": "PLACEHOLDER. Cycle 1 task: vendor a real US zip→USDA zone dataset (~42k rows, ~40KB compressed). Sources: USDA Plant Hardiness Zone Map (2023 update) via plantmaps.com or a derived GitHub dataset. Replace this file with a flat object: { '94103': '10a', ... }. Keep the schema simple — string zip → string zone.",
+    "schemaVersion": 1
+  },
+  "94103": "10b",
+  "10001": "7b",
+  "60601": "6a",
+  "98101": "9a",
+  "33101": "11a",
+  "02108": "7a"
+}

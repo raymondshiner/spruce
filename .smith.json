@@ -1,0 +1,6 @@
+{
+  "basePort": 5190,
+  "branchPrefix": "smith/",
+  "installer": "npm install",
+  "devCommand": "PORT=$SMITH_PORT npm run dev"
+}
