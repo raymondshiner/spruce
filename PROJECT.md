@@ -4,11 +4,11 @@
 
 ## Vision
 
-A dedicated mobile assistant for landscaping and redecorating. The primary user (Raymond's wife) currently uses ChatGPT Plus on her phone to riff on her yard and her rooms — uploading photos, getting suggestions, iterating. The web ChatGPT UX is generic, the conversation history is bottomless, and saved projects don't have structure. Spruce is the dedicated tool for that workflow: take a photo, get an opinionated plan, save it as a project, see it visualized, eventually shop the suggestions through Amazon.
+A dedicated mobile assistant for landscaping and redecorating. The original user — a household member of the developer — currently uses ChatGPT Plus on their phone to riff on the yard and rooms, uploading photos, getting suggestions, iterating. The web ChatGPT UX is generic, the conversation history is bottomless, and saved projects don't have structure. Spruce is the dedicated tool for that workflow: take a photo, get an opinionated plan, save it as a project, see it visualized, eventually shop the suggestions through Amazon.
 
-**Yard-first.** Her primary current use case is the yard, so Cycle 1 ships yard support. Indoor rooms come in a later cycle.
+**Yard-first.** The primary current use case is the yard, so Cycle 1 ships yard support. Indoor rooms come in a later cycle.
 
-**Distribution model: BYOK (Bring Your Own Key).** Each user enters their own OpenAI API key in settings. Spruce never holds shared LLM billing — the user does. This makes the app shareable beyond Raymond's household while keeping operating costs at $0 for us. The moat is **domain-specialized prompts** (yard/home redesign with structured output) plus a focused UX, not the model.
+**Distribution model: BYOK (Bring Your Own Key).** Each user enters their own OpenAI API key in settings. Spruce never holds shared LLM billing — the user does. This makes the app shareable beyond the original household while keeping operating costs at $0 for us. The moat is **domain-specialized prompts** (yard/home redesign with structured output) plus a focused UX, not the model.
 
 **Domain:** `spruce.studio`
 
@@ -41,7 +41,7 @@ Defaults from `~/src/CLAUDE.md` (Vite + React 19 + Vercel) **do not apply** — 
 
 **Why Expo over bare RN:** managed workflow, EAS handles Android signing + AAB builds in the cloud, OTA updates for non-native changes, every camera/image library is pre-integrated.
 
-**Why not Flutter / native Swift:** Raymond is a React/TS engineer. Expo is the path of least resistance and his existing mental model carries over.
+**Why not Flutter / native Swift:** the developer is a React/TS engineer. Expo is the path of least resistance and his existing mental model carries over.
 
 ## Architecture (Cycle 1)
 
@@ -138,7 +138,7 @@ export const FollowupReplySchema = z.object({
 });
 ```
 
-- Categories widened from the plan's "plants vs. hardscape vs. furniture" to include `lighting` and `decor` — they routinely fall out of LLM plans and deserve their own cards, especially for Cycle 3 Amazon linking. Flag for Raymond if he wants this narrower.
+- Categories widened from the plan's "plants vs. hardscape vs. furniture" to include `lighting` and `decor` — they routinely fall out of LLM plans and deserve their own cards, especially for Cycle 3 Amazon linking. Flag for review if we want this narrower.
 - `visionSummary` is the keystone: ~200-1500 chars of detail ("south-facing 30×20 backyard, mature oak in NE corner, afternoon shade on left third, patchy lawn, wood privacy fence three sides, neighbor's house visible north…") that the LLM produces once on Turn 1 and never sees the photo again afterward.
 - Follow-ups can return a `planPatch` so the LLM can edit the plan surgically ("swap the patio set for something cheaper" → reply + `removedItemNames: ['Acacia Lounge Set'] + addedItems: [...]`). App applies the patch to local state.
 - OpenAI Structured Outputs config: `response_format: { type: 'json_schema', json_schema: { name: 'plan', schema: <zod-to-json-schema>, strict: true } }`. On parse fail: one retry with a tightening system message, then user-visible error.
@@ -162,7 +162,7 @@ Each cycle ships as a feature branch → PR → Play Store internal-testing-trac
 - [ ] Package name `studio.spruce.app` reserved in Play Console. App record created with placeholder icon + Data Safety form (BYOK + Keystore storage + no analytics + no third-party SDKs + no data shared with third parties; user data sent to user's own OpenAI account via our proxy disclosed).
 - [ ] EAS Build credentials configured (Android upload keystore — EAS-managed).
 - [ ] `app.json` set: package name, name, version, versionCode, adaptive icon (foreground + background), splash, Android permission strings (`CAMERA`, `READ_MEDIA_IMAGES`, `INTERNET`).
-- [ ] Play Console **internal testing track** created, wife's Google account added as tester.
+- [ ] Play Console **internal testing track** created, primary user's Google account added as tester.
 
 *Core loop:*
 - [ ] App installed on her Android device via **Play Store internal testing link** (not Expo Go — see Workflow notes).
@@ -268,7 +268,7 @@ Decisions locked:
 - ✅ **ChatGPT Plus subscription cannot be used for API access** — irrelevant given BYOK.
 
 Locked in the 2026-06-22 ultrathink pass:
-- ✅ **Repo layout = single package for Cycle 1** (`src/app`, `src/shared`, `worker/`). Monorepo + pnpm workspaces deferred — see `## Stack` for the reasoning. **Reverses the earlier monorepo decision** — flagged for explicit Raymond review.
+- ✅ **Repo layout = single package for Cycle 1** (`src/app`, `src/shared`, `worker/`). Monorepo + pnpm workspaces deferred — see `## Stack` for the reasoning. **Reverses the earlier monorepo decision** — flagged for explicit review.
 - ✅ **Worker auth = per-device anonymous token + HMAC-signed requests + replay window**. Google Play Integrity API = backlog upgrade path.
 - ✅ **Worker rate limits = 60/hr + 500/day for `/v1/plan`, 10/hr + 40/day for `/v1/visualize`** (KV-backed, env-tunable).
 - ✅ **Logging allowlist = request_id, device_id, mode, timestamp, response_code, latency_ms, token counts**. No bodies, no keys, no system prompt.
