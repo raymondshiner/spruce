@@ -244,6 +244,11 @@ Each cycle ships as a feature branch → PR → Play Store internal-testing-trac
 ### Cycle 5+ — backlog
 
 - **Amazon PA API integration** — Associates signup + real product cards (images, prices, ratings). Triggered when we have signal that users tap items meaningfully.
+- **Amazon account linking / price tracking** — let the user link an Amazon account (or saved searches) so item cards show live prices, in-cart status, or price-drop alerts. Heavier than the PA API card work; gated behind real demand and Amazon's API/ToS constraints.
+- **AR preview** — point the camera at the actual space and overlay suggested changes/items in AR (ARCore on Android), instead of only a 2D before/after render. Large effort; depends on Cycle 2 visualize landing well first.
+- **Google account sign-in** — optional Google login as an alternative/companion to BYOK identity, enabling cross-device project sync. Conflicts with the current "no account system, API key is identity" stance — only if household-sharing demand materializes.
+- **Dark mode** — themeable light/dark UI. Cheap, do early once brand visuals are locked.
+- **Open-source the app** — evaluate publishing the repo (app + worker) publicly. Tension: the tuned system prompts are the moat and live server-side; opening the client is low-risk, opening the Worker prompts is not. Decide what stays private.
 - Voice input for goals via Whisper API (BYOK, replaces native dictation for hands-free flow)
 - Project export (PDF / share-sheet)
 - iOS build (EAS makes this cheap if we want it later — requires Apple Developer Program enrollment)
