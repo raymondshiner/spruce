@@ -1,7 +1,7 @@
-import * as SecureStore from 'expo-secure-store';
 import { create } from 'zustand';
 
 import { registerDevice } from '@/shared/api/client';
+import * as SecureStore from '@/shared/lib/secure-store';
 
 const KEYS = {
   openaiKey: 'spruce.openai_api_key',

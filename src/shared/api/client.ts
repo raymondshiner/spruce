@@ -1,5 +1,3 @@
-import Constants from 'expo-constants';
-
 import { signRequest } from '@/shared/lib/hmac';
 import type {
   ApiError,
@@ -13,11 +11,9 @@ import type {
   VisualizeResponse,
 } from '@/shared/api/types';
 
-const PROXY_URL =
-  (Constants.expoConfig?.extra as { spruceProxyUrl?: string } | undefined)?.spruceProxyUrl ??
-  'http://localhost:8787';
+const PROXY_URL = import.meta.env.VITE_SPRUCE_PROXY_URL ?? 'http://localhost:8787';
 
-const APP_VERSION = (Constants.expoConfig?.version as string | undefined) ?? '0.1.0';
+const APP_VERSION = import.meta.env.VITE_APP_VERSION ?? '0.1.0';
 
 export class SpruceApiError extends Error {
   readonly kind: ApiError['error'];

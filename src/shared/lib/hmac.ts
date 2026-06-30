@@ -1,6 +1,5 @@
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import * as Crypto from 'expo-crypto';
 
 function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2);
@@ -55,6 +54,6 @@ export async function signRequest(args: {
 }
 
 export async function generateDeviceSecret(): Promise<string> {
-  const bytes = await Crypto.getRandomBytesAsync(32);
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
   return bytesToHex(bytes);
 }

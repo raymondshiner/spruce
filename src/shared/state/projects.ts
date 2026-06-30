@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-import { deleteProject, listProjects, upsertProject } from '@/shared/db/sqlite';
+import { deleteProject, listProjects, upsertProject } from '@/shared/db/projects';
 import type { Project } from '@/shared/types/project';
 
 type ProjectsState = {
