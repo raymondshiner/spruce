@@ -1,11 +1,12 @@
 import { Link, useNavigate } from 'react-router-dom';
+import { useShallow } from 'zustand/react/shallow';
 
 import { Screen } from '@/components/ui';
 import { selectProjectList, useProjects } from '@/shared/state/projects';
 
 export default function ProjectList() {
   const navigate = useNavigate();
-  const projects = useProjects(selectProjectList);
+  const projects = useProjects(useShallow(selectProjectList));
 
   return (
     <Screen
