@@ -2,6 +2,5 @@
   "basePort": 5190,
   "branchPrefix": "smith/",
   "installer": "npm install",
-  "devCommand": "PORT=$SMITH_PORT npm run dev",
-  "platform": "android"
+  "devCommand": "npm run dev -- --port $SMITH_PORT"
 }

@@ -1,10 +1,12 @@
 # Spruce
 
-> A native mobile app for AI-assisted yard and home redesign. Photo in, plan out.
+> An installable PWA for AI-assisted yard and home redesign. Photo in, plan out.
 
 ## Vision
 
-A dedicated mobile assistant for landscaping and redecorating. The original user — a household member of the developer — currently uses ChatGPT Plus on their phone to riff on the yard and rooms, uploading photos, getting suggestions, iterating. The web ChatGPT UX is generic, the conversation history is bottomless, and saved projects don't have structure. Spruce is the dedicated tool for that workflow: take a photo, get an opinionated plan, save it as a project, see it visualized, eventually shop the suggestions through Amazon.
+A dedicated web app for landscaping and redecorating. The original user — a household member of the developer — currently uses ChatGPT Plus on their phone to riff on the yard and rooms, uploading photos, getting suggestions, iterating. The web ChatGPT UX is generic, the conversation history is bottomless, and saved projects don't have structure. Spruce is the dedicated tool for that workflow: take a photo, get an opinionated plan, save it as a project, see it visualized, eventually shop the suggestions through Amazon.
+
+Spruce is a **Progressive Web App** — she installs it once via "Add to Home Screen" and it behaves like a real app (own icon, fullscreen, offline shell), with none of the app-store overhead. Updates ship the instant we deploy.
 
 **Yard-first.** The primary current use case is the yard, so Cycle 1 ships yard support. Indoor rooms come in a later cycle.
 
@@ -19,33 +21,34 @@ Explicit out-of-scope to prevent scope creep:
 - **Not a social product.** No feeds, no sharing-with-strangers, no comments. Single-user or household-scale only.
 - **Not a CAD/floorplan tool.** No 3D modeling, no measurements, no room scanning. Photos in, plans out — that's the loop.
 - **Not a marketplace.** When we add Amazon links (Cycle 3), they're search URLs. We don't host listings, scrape product data, or process payments.
-- **Not a PWA.** Hard requirement: native Android app. PWA was considered and rejected — camera UX, install ergonomics, and "this is a real app on my phone" matter for the use case. **iOS dropped 2026-06-22** — target user is on Android, no reason to carry Apple toolchain.
+- **Not a native app.** Hard requirement: an installable PWA, no app stores. Native (Expo/React Native) was scaffolded and rejected 2026-06-30 — the developer is a web engineer, the use case (form + camera + chat) doesn't need native primitives, and the dev/ship friction (emulator, EAS builds, Play Console enrollment) wasn't worth it for a single-household tool. PWA install on Android gives the "real app on my phone" feel that matters here.
+- **Not iOS-specific.** Target user is on Android; we build to web standards, so iOS Safari "just works" as a fallback, but we don't chase iOS PWA quirks.
 - **Not a hosted-LLM SaaS.** We never pay for users' inference. Spruce is BYOK: user supplies API key, user pays the API provider directly. Keeps Spruce free to operate and free to share.
 - **Not an account system in v1.** BYOK + local storage means no signup, no passwords, no email. The user's API key *is* their identity.
 
 ## Stack
 
-Defaults from `~/src/CLAUDE.md` (Vite + React 19 + Vercel) **do not apply** — that's a web stack. For native mobile:
+Built on the validated `~/src` web stack — defaults apply.
 
-- **Repo layout:** **Single package for Cycle 1**, monorepo deferred. `src/app/` (Expo), `src/shared/` (types, USDA table, schema), `worker/` (Cloudflare Workers, deployed via its own `wrangler.toml`). Reversed from the earlier monorepo+pnpm decision after an ultrathink pass — Expo + pnpm + Metro has well-documented resolver pain (symlink hoisting, `watchFolders`, EAS `pnpm` flag) and Cycle 1 has one developer, no second consumer of `shared/`, and a tight ship target. Revisit monorepo in Cycle 3+ when Cycle 2's image-gen code creates real cross-runtime shared logic.
-- **Framework:** Expo (React Native) + Expo Router
-- **Build/distribution:** EAS Build + EAS Submit (Google Play **internal testing track** for distribution)
-- **Language:** TypeScript strict
-- **State:** Zustand (single store per domain: `useSession` for API key, `useProjects` for the project list + active project). `persist` middleware for SQLite-backed state.
-- **Data persistence:** SQLite via `expo-sqlite` for projects + photo blobs + chat history. No cloud sync.
-- **Secrets storage:** Android Keystore via `expo-secure-store` (uses EncryptedSharedPreferences backed by the Keystore on Android). Never AsyncStorage or SQLite for secrets.
-- **Camera/photos:** `expo-camera` + `expo-image-picker`
-- **Vision LLM:** BYOK — user supplies an OpenAI API key in settings. v1 is OpenAI-only (`gpt-4o`). Provider-agnostic adapter is still scaffolded in code so Anthropic can be added in a later cycle without refactoring.
-- **Backend:** Thin Cloudflare Workers proxy. Receives `{userApiKey, imageData, goal, chatHistory}` from the app, attaches our tuned system prompt server-side, forwards to OpenAI. Never persists the user's key. **Why a proxy under BYOK:** keeps the system prompts off the device — they're the moat, not the model.
+- **Repo layout:** **Single package for Cycle 1**, monorepo deferred. `src/` (Vite + React app), `src/shared/` (types, USDA table, schema, api client), `worker/` (Cloudflare Workers, deployed via its own `wrangler.toml`). One developer, no second consumer of `shared/`, tight ship target. Revisit monorepo in Cycle 3+ if cross-runtime shared logic grows.
+- **Framework:** Vite + React 19 + TypeScript strict (SPA).
+- **PWA:** `vite-plugin-pwa` (Workbox under the hood) — web app manifest, service worker, offline app-shell, installability + Add-to-Home-Screen. Maskable icons + splash via the manifest.
+- **Routing:** React Router (SPA routes for onboarding → main → project → settings).
+- **Styling/UI:** Tailwind v4 + shadcn/ui (Radix Nova preset), per the validated stack.
+- **Build/distribution:** Cloudflare Pages (app) + Cloudflare Workers (proxy). Deploy = `git push` / `wrangler`. No store, no review, no signing.
+- **State:** Zustand (single store per domain: `useSession` for the API key, `useProjects` for the project list + active project, `useChat` for follow-up turns). `persist` middleware backed by IndexedDB.
+- **Data persistence:** IndexedDB (via `idb`) for projects + photo blobs + chat history. Photo blobs stored as `Blob`/`File` in an object store; thumbnails as small data URLs for fast list rendering. No cloud sync.
+- **Secrets storage:** the OpenAI API key + per-device HMAC secret are encrypted at rest with a **non-extractable WebCrypto `CryptoKey`** (AES-GCM) whose key material lives in IndexedDB and never leaves the device. This is weaker than Android Keystore but acceptable at single-household scale on the user's own phone — and it removes the APK-decompile threat entirely (no binary to reverse). Never store the raw key in plain IndexedDB or `localStorage`.
+- **Camera/photos:** `<input type="file" accept="image/*" capture="environment">` for capture-or-pick (opens the camera directly on Android Chrome); `getUserMedia` only if a live in-app viewfinder is wanted later. Client-side downscale/compress before upload (`canvas` / `createImageBitmap`).
+- **Vision LLM:** BYOK — user supplies an OpenAI API key in settings. v1 is OpenAI-only (`gpt-4o`). Provider-agnostic adapter still scaffolded so Anthropic can be added later without refactoring.
+- **Backend:** Thin Cloudflare Workers proxy. Receives `{userApiKey, imageData, goal, chatHistory}` from the app, attaches our tuned system prompt server-side, forwards to OpenAI. Never persists the user's key. **Why a proxy under BYOK:** keeps the system prompts off the client — they're the moat, not the model. (A web client is even *more* inspectable than a native binary, so server-side prompts matter more, not less.)
 - **Amazon integration (Cycle 3):** generate Amazon search URLs from LLM-extracted item names. No PA API, no Associates signup, no scraping. PA-API-based product cards deferred to Cycle 4+ once we know users actually tap the items.
 
-**Why Expo over bare RN:** managed workflow, EAS handles Android signing + AAB builds in the cloud, OTA updates for non-native changes, every camera/image library is pre-integrated.
-
-**Why not Flutter / native Swift:** the developer is a React/TS engineer. Expo is the path of least resistance and his existing mental model carries over.
+**Why PWA over native:** the developer is a React/TS web engineer — this is his home turf. The whole `~/src` stack carries over directly. No emulator, no EAS builds, no Play Console; deploy is `git push` and updates are instant. Camera and persistent storage are well-supported on Android Chrome for this use case.
 
 ## Architecture (Cycle 1)
 
-Resolutions from the 2026-06-22 ultrathink pass. These are the *how* behind the locked decisions in `## Stack` — design contracts that the Cycle 1 build depends on.
+Design contracts the Cycle 1 build depends on. The Worker, schema, and data model below are framework-agnostic and survived the native→PWA pivot intact.
 
 ### Data model
 
@@ -56,7 +59,7 @@ type Project = {
   createdAt: number;
   updatedAt: number;
   mode: 'yard' | 'indoor'; // 'indoor' lands in Cycle 4
-  thumbnailUri: string;    // file://… local path to the original photo
+  thumbnailDataUrl: string;// small (≤300px) data URL for fast list rendering
   photoSha256: string;     // dedup / cache key
   zone?: string;           // USDA zone for yard mode (e.g. "7a"); room type for indoor (Cycle 4)
   goal: string;            // user's one-line Turn 1 prompt
@@ -70,8 +73,8 @@ type Project = {
 };
 ```
 
-- Photos live on disk at `${FileSystem.documentDirectory}projects/${projectId}/original.jpg`. SQLite stores the path plus a 300px thumbnail blob for fast list rendering.
-- Turn 1 sends the photo (base64) to the Worker. After that, the photo is never re-sent — `visionSummary` is the LLM's persistent memory of it.
+- The original full-res photo is stored as a `Blob` in a dedicated IndexedDB object store, keyed by `projectId`. The `Project` record holds a small thumbnail data URL plus the blob key.
+- Turn 1 sends the photo (base64/data URL) to the Worker. After that, the photo is never re-sent — `visionSummary` is the LLM's persistent memory of it.
 - 10-turn cap = `turns.filter(t => t.role === 'user').length < 10`. At cap, input is replaced with a "Start a new project from this plan" CTA that clones `plan` + `visionSummary` into a fresh project, preserving context.
 
 ### Worker proxy contract
@@ -81,7 +84,7 @@ Two routes, shared auth + rate-limit middleware:
 - `POST /v1/plan` — Turn 1 (image + goal → `Plan`) and follow-up turns (no image → `FollowupReply`).
 - `POST /v1/visualize` — Cycle 2 image generation. Stricter rate limit.
 
-**Auth:** per-device anonymous token, generated at first run via `POST /v1/register` and stored in the Keystore alongside the user's API key. Requests are HMAC-signed over `(method, path, body_sha256, timestamp, nonce)` using a per-device secret returned at registration. ±5 min timestamp window, nonce cache to block replay. Not bulletproof against a determined reverser — defense-in-depth for the casual case. **Google Play Integrity API is the upgrade path** if Spruce ever opens beyond personal use; left as a backlog item but middleware shape is designed to swap auth schemes cleanly.
+**Auth:** per-device anonymous token, generated at first run via `POST /v1/register` and stored encrypted in IndexedDB (WebCrypto, see Secrets storage) alongside the user's API key. Requests are HMAC-signed over `(method, path, body_sha256, timestamp, nonce)` using a per-device secret returned at registration. ±5 min timestamp window, nonce cache to block replay. Not bulletproof against a determined attacker reading the request in browser devtools — defense-in-depth for the casual case. The middleware shape is designed to swap auth schemes cleanly (e.g. Cloudflare Turnstile / a signed first-party token) if Spruce ever opens beyond personal use.
 
 **Rate limits (Worker-enforced, per device, KV-backed):** 60 req/hour and 500 req/day for `/v1/plan`; 10 req/hour and 40 req/day for `/v1/visualize`. Tunable via Worker env vars. These are *prompt-abuse and runaway-loop* guards, not OpenAI spend caps (still the user's job).
 
@@ -138,18 +141,18 @@ export const FollowupReplySchema = z.object({
 });
 ```
 
-- Categories widened from the plan's "plants vs. hardscape vs. furniture" to include `lighting` and `decor` — they routinely fall out of LLM plans and deserve their own cards, especially for Cycle 3 Amazon linking. Flag for review if we want this narrower.
+- Categories widened from "plants vs. hardscape vs. furniture" to include `lighting` and `decor` — they routinely fall out of LLM plans and deserve their own cards, especially for Cycle 3 Amazon linking. Flag for review if we want this narrower.
 - `visionSummary` is the keystone: ~200-1500 chars of detail ("south-facing 30×20 backyard, mature oak in NE corner, afternoon shade on left third, patchy lawn, wood privacy fence three sides, neighbor's house visible north…") that the LLM produces once on Turn 1 and never sees the photo again afterward.
 - Follow-ups can return a `planPatch` so the LLM can edit the plan surgically ("swap the patio set for something cheaper" → reply + `removedItemNames: ['Acacia Lounge Set'] + addedItems: [...]`). App applies the patch to local state.
 - OpenAI Structured Outputs config: `response_format: { type: 'json_schema', json_schema: { name: 'plan', schema: <zod-to-json-schema>, strict: true } }`. On parse fail: one retry with a tightening system message, then user-visible error.
 
 ### USDA zone derivation
 
-Confirming the locked decision with one addition: source the mapping from a public dataset (USDA / plantmaps-derived), vendor as `src/shared/data/usda-zones.json` (~40KB, ~42k zips). `zipToZone(zip: string): string | null`. For non-US zips, app shows: "Spruce is yard-tuned for US plant zones. Indoor mode (Cycle 4) works anywhere." — door open for a "Set zone manually" fallback later.
+Source the mapping from a public dataset (USDA / plantmaps-derived), vendored as `src/shared/data/usda-zones.json` (~40KB, ~42k zips). `zipToZone(zip: string): string | null`. For non-US zips, app shows: "Spruce is yard-tuned for US plant zones. Indoor mode (Cycle 4) works anywhere." — door open for a "Set zone manually" fallback later.
 
 ## Cycles
 
-Each cycle ships as a feature branch → PR → Play Store internal-testing-track build her phone can install.
+Each cycle ships as a feature branch → PR → Cloudflare Pages deploy she can use immediately (installed PWA auto-updates on next open).
 
 ### Cycle 1 — MVP: yard photo → plan → save
 
@@ -157,21 +160,20 @@ Each cycle ships as a feature branch → PR → Play Store internal-testing-trac
 
 **Done when:**
 
-*Google Play / EAS prereqs (one-time, easy to underestimate):*
-- [ ] Google Play Console developer account enrolled (~$25 one-time, usually approved within 48h — start now).
-- [ ] Package name `studio.spruce.app` reserved in Play Console. App record created with placeholder icon + Data Safety form (BYOK + Keystore storage + no analytics + no third-party SDKs + no data shared with third parties; user data sent to user's own OpenAI account via our proxy disclosed).
-- [ ] EAS Build credentials configured (Android upload keystore — EAS-managed).
-- [ ] `app.json` set: package name, name, version, versionCode, adaptive icon (foreground + background), splash, Android permission strings (`CAMERA`, `READ_MEDIA_IMAGES`, `INTERNET`).
-- [ ] Play Console **internal testing track** created, primary user's Google account added as tester.
+*PWA / deploy prereqs (one-time, light):*
+- [ ] Vite + React + TS app scaffolded on the validated stack; Tailwind v4 + shadcn initialized.
+- [ ] `vite-plugin-pwa` configured: web app manifest (name, short_name, theme/background color, display `standalone`), maskable icons (192/512), service worker for offline app-shell.
+- [ ] Cloudflare Pages project connected to the repo; production deploy reachable at a URL she can open.
+- [ ] Worker deployed (`wrangler deploy`); app points at the deployed Worker.
+- [ ] Verified installable on her Android device via Chrome "Add to Home Screen" (real icon, fullscreen launch).
 
 *Core loop:*
-- [ ] App installed on her Android device via **Play Store internal testing link** (not Expo Go — see Workflow notes).
-- [ ] First-run flow: paste OpenAI API key + enter zip code (used once to derive USDA hardiness zone). Worker registration call issues per-device token + HMAC secret, stored in Keystore alongside the user's key.
-- [ ] She can hit a big "+" button, capture or pick a photo of a yard/outdoor space.
+- [ ] First-run flow: paste OpenAI API key + enter zip code (used once to derive USDA hardiness zone). Worker registration call issues per-device token + HMAC secret, stored encrypted (WebCrypto) in IndexedDB alongside the user's key.
+- [ ] She can hit a big "+" button, capture or pick a photo of a yard/outdoor space (`<input … capture="environment">`).
 - [ ] She can **type** a one-line goal (Gboard voice-input handles "speak" — no Whisper integration needed for Cycle 1).
 - [ ] App sends image + goal + zone + tuned yard system prompt (server-side) to `gpt-4o`. LLM returns structured JSON: `{vibe, key_changes[], items[]}`. Items have plant-type awareness (plants vs. hardscape vs. furniture).
-- [ ] Plan is rendered as a styled view. Saved as a "project" with the original photo. Project list screen shows thumbnails.
-- [ ] Tapping a project re-opens its plan. She can ask **text-only follow-ups** (photo-once model — `visionSummary` injected as context, photo not re-sent). **Hard cap: 10 follow-up turns per project.** At cap, input replaced with "Start a new project from this plan" CTA that clones the plan + vision summary. Chat persists across app launches.
+- [ ] Plan is rendered as a styled view. Saved as a "project" with the original photo (Blob in IndexedDB). Project list screen shows thumbnails.
+- [ ] Tapping a project re-opens its plan. She can ask **text-only follow-ups** (photo-once model — `visionSummary` injected as context, photo not re-sent). **Hard cap: 10 follow-up turns per project.** At cap, input replaced with "Start a new project from this plan" CTA that clones the plan + vision summary. Chat persists across reloads.
 - [ ] Follow-up replies can return a `planPatch` (added/removed items, updated vibe) that the app applies to the local plan state.
 - [ ] Error states implemented per the Architecture table: 401 modal, 429 toasts, 5xx one-retry + tap-to-retry, schema-parse retry, offline detection.
 - [ ] Onboarding screen links to OpenAI dashboard with instructions to set a hard spend limit. Spruce enforces no caps.
@@ -182,8 +184,8 @@ Each cycle ships as a feature branch → PR → Play Store internal-testing-trac
 - Zip → USDA zone is a one-time lookup via `src/shared/data/usda-zones.json` (~40KB, no network call). Non-US zip → "indoor mode (Cycle 4) works anywhere" message.
 - Provider-agnostic adapter scaffolded, OpenAI implementation only.
 - Single tuned yard system prompt + JSON schema (`PlanSchema` / `FollowupReplySchema`) live server-side in the Worker, not in the app bundle.
-- Chat schema and data model per the `## Architecture (Cycle 1)` section. Persisted in SQLite.
-- Android only. iOS dropped 2026-06-22.
+- Chat schema and data model per the `## Architecture (Cycle 1)` section. Persisted in IndexedDB.
+- Android Chrome is the primary target; iOS Safari is a best-effort fallback.
 
 **Out of scope for this cycle:**
 - Image generation (Cycle 2)
@@ -209,7 +211,7 @@ Each cycle ships as a feature branch → PR → Play Store internal-testing-trac
 - OpenAI `gpt-image-1` `images.edit` endpoint with the original photo + LLM-distilled "change description" as the editing prompt.
 - Quality preset: `medium` (cost vs. quality balance, ~$0.07-$0.09 per image).
 - **Framed as "inspirational rendering," not "literal photorealistic structure preservation."** We don't promise her yard will look exactly like the render — we promise a vibe.
-- Generated images stored as blobs in SQLite alongside the project.
+- Generated images stored as blobs in IndexedDB alongside the project.
 
 **Why no spike-first**: Decision was to commit fully. If quality falls short during Cycle 2, fallback plan is to ship what we have (label clearly as "concept render") and swap Cycle 3 (Shoppable) and Cycle 2 — visualize moves to a later cycle for revisiting.
 
@@ -226,7 +228,7 @@ Each cycle ships as a feature branch → PR → Play Store internal-testing-trac
 **Scope:**
 - No Amazon Associates signup. No PA API. No affiliate tag.
 - Item cards show LLM-generated name + category + price-range estimate (no real product previews).
-- Shopping list persists in SQLite.
+- Shopping list persists in IndexedDB.
 
 ### Cycle 4 — Indoor mode
 
@@ -245,13 +247,12 @@ Each cycle ships as a feature branch → PR → Play Store internal-testing-trac
 
 - **Amazon PA API integration** — Associates signup + real product cards (images, prices, ratings). Triggered when we have signal that users tap items meaningfully.
 - **Amazon account linking / price tracking** — let the user link an Amazon account (or saved searches) so item cards show live prices, in-cart status, or price-drop alerts. Heavier than the PA API card work; gated behind real demand and Amazon's API/ToS constraints.
-- **AR preview** — point the camera at the actual space and overlay suggested changes/items in AR (ARCore on Android), instead of only a 2D before/after render. Large effort; depends on Cycle 2 visualize landing well first.
+- **AR preview** — point the camera at the actual space and overlay suggested changes/items. On the web this means **WebXR** (Android Chrome support is real but more limited than native ARCore); revisit feasibility once Cycle 2 visualize lands well. If WebXR proves insufficient this is the one feature that could justify a thin native companion — evaluate then, don't pre-optimize.
 - **Google account sign-in** — optional Google login as an alternative/companion to BYOK identity, enabling cross-device project sync. Conflicts with the current "no account system, API key is identity" stance — only if household-sharing demand materializes.
 - **Dark mode** — themeable light/dark UI. Cheap, do early once brand visuals are locked.
 - **Open-source the app** — evaluate publishing the repo (app + worker) publicly. Tension: the tuned system prompts are the moat and live server-side; opening the client is low-risk, opening the Worker prompts is not. Decide what stays private.
 - Voice input for goals via Whisper API (BYOK, replaces native dictation for hands-free flow)
-- Project export (PDF / share-sheet)
-- iOS build (EAS makes this cheap if we want it later — requires Apple Developer Program enrollment)
+- Project export (PDF / share-sheet via Web Share API)
 - Saved style preferences ("we like mid-century modern, low maintenance")
 - Household sharing (multiple devices same household, shared project list)
 - Anthropic provider in BYOK settings
@@ -259,57 +260,55 @@ Each cycle ships as a feature branch → PR → Play Store internal-testing-trac
 ## Open questions
 
 Decisions locked:
+- ✅ **Client = installable PWA** (Vite + React on the validated `~/src` stack). Native (Expo/RN) scaffolded then rejected 2026-06-30 — web is the developer's home turf, the use case doesn't need native, store/build friction not worth it for household scale.
 - ✅ **Distribution = BYOK** (user supplies API key, user pays the provider).
+- ✅ **Deploy = Cloudflare Pages (app) + Cloudflare Workers (proxy)** — `git push` / `wrangler`, no store, no review.
 - ✅ **Backend = thin Cloudflare Workers proxy** (no key storage, system-prompt injection only — protects prompt IP).
 - ✅ **Provider in v1 = OpenAI only (`gpt-4o`)**, provider-agnostic adapter scaffolded for Anthropic later.
 - ✅ **Cycle order = Yard MVP → Visualize → Shoppable → Indoor** (yard-first because that's her current primary ChatGPT use case).
 - ✅ **Cycle 2 image gen = full commit, no spike** (with fallback plan: relabel as "concept render" and reshuffle if quality falls short).
 - ✅ **Yard context capture = zip code at onboarding, LLM asks the rest inline** via natural follow-ups.
 - ✅ **Follow-up chat = photo-once + 10 turn cap + persistent**.
-- ✅ **State management = Zustand** with `persist` middleware.
+- ✅ **State management = Zustand** with `persist` middleware backed by IndexedDB.
+- ✅ **Local persistence = IndexedDB** (`idb`) for projects, photo blobs, chat. No cloud sync.
+- ✅ **Secret storage = WebCrypto non-extractable key (AES-GCM) over IndexedDB** — encrypts the API key + HMAC secret at rest. Accepted as weaker-than-Keystore at household scale.
+- ✅ **Camera = `<input … capture="environment">`** (file picker / camera on Android Chrome); `getUserMedia` only if a live viewfinder is needed later.
 - ✅ **Amazon in Cycle 3 = search URLs only**, no PA API / Associates until validated.
 - ✅ **Cost guardrails = trust OpenAI's own** (onboarding directs to OpenAI dashboard limits; Spruce enforces nothing).
 - ✅ **"Speak" goal input = Gboard voice-input** (free, built-in on Android). Whisper API integration deferred to backlog.
-- ✅ **ChatGPT Plus subscription cannot be used for API access** — irrelevant given BYOK.
-
-Locked in the 2026-06-22 ultrathink pass:
-- ✅ **Repo layout = single package for Cycle 1** (`src/app`, `src/shared`, `worker/`). Monorepo + pnpm workspaces deferred — see `## Stack` for the reasoning. **Reverses the earlier monorepo decision** — flagged for explicit review.
-- ✅ **Worker auth = per-device anonymous token + HMAC-signed requests + replay window**. Google Play Integrity API = backlog upgrade path.
+- ✅ **Worker auth = per-device anonymous token + HMAC-signed requests + replay window**. Turnstile / signed first-party token = upgrade path if Spruce opens beyond personal use.
 - ✅ **Worker rate limits = 60/hr + 500/day for `/v1/plan`, 10/hr + 40/day for `/v1/visualize`** (KV-backed, env-tunable).
 - ✅ **Logging allowlist = request_id, device_id, mode, timestamp, response_code, latency_ms, token counts**. No bodies, no keys, no system prompt.
 - ✅ **Schema = `PlanSchema` + `FollowupReplySchema` in `src/shared/schema/`** with OpenAI Structured Outputs strict mode + one-retry on parse fail.
 - ✅ **Item categories widened to 5**: `plant | hardscape | furniture | lighting | decor`. Flag if narrower preferred.
-- ✅ **Error UX** — full Worker→app mapping table in `## Architecture (Cycle 1)`. 401 = modal, 429 (user) = toast + dashboard link, 429 (Spruce) = retry-after toast, 5xx = one auto-retry then tap-to-retry, offline = banner state.
-- ✅ **Bundle ID = `studio.spruce.app`** (reverse of `spruce.studio` + `.app` for clarity).
+- ✅ **Error UX** — full Worker→app mapping table in `## Architecture (Cycle 1)`.
 - ✅ **Streaming = off for Cycle 1** (structured-JSON responses are not partial-renderable).
 
 Deferred (will revisit when relevant):
 
-- [ ] **Brand visuals** — icon, palette, type. Decide once we have an internal-track build to look at. Spruce-tree direction is the obvious lean.
-- [ ] **Anthropic provider** — slot in when there's signal it'd unlock real users (e.g. user feedback "I only have an Anthropic account").
-- [ ] **Google Play Integrity API** — swap in for HMAC auth if Spruce ever opens beyond personal use.
+- [ ] **Brand visuals** — icon, palette, type, PWA manifest theme. Decide once we have a deployed shell to look at. Spruce-tree direction is the obvious lean.
+- [ ] **Anthropic provider** — slot in when there's signal it'd unlock real users.
+- [ ] **Stronger auth (Turnstile / signed token)** — swap in for HMAC if Spruce ever opens beyond personal use.
 - [ ] **Monorepo revisit** — Cycle 3+ once cross-runtime shared code becomes real.
 
 ## Risks / unknowns
 
-- **Play Store review for an LLM-powered app.** Google's "AI-Generated Content" policy applies — apps that generate content from AI must have an in-app reporting mechanism for offensive output. Worth surfacing in Cycle 1 UI (long-press a plan item → "Report this suggestion") even though it's a closed-test app, because review for the internal track is still policy-checked.
-- **Internal testing track expiry.** No 90-day expiry like TestFlight — Play internal testing builds don't expire. OTA updates via EAS still handle most changes; native code changes still need a new AAB upload.
-- **Internal testing track has a 100-tester cap.** Not a ceiling we'll hit for personal/household use. If Spruce ever needed >100 testers, move to closed testing (then open testing, then production) — all still pre-public, all on the same Play Console flow.
-- **BYOK onboarding friction.** Asking users to paste an API key on first run is a real drop-off. Mitigation: clear instructions screen with screenshots of where to get the key on OpenAI's site, paste-from-clipboard auto-detect, "I'll do this later" with a sample/demo mode (TBD).
-- **User's API key leakage.** Key must live in Android Keystore via `expo-secure-store` (not AsyncStorage, not SQLite). Cloudflare Workers proxy must never log the key — log only request shapes + provider response codes. Audit this before release.
-- **Prompt extraction via app decompile.** If we ever ship prompts client-side as a fallback, they're gone. Keep them server-side, full stop.
-- **LLM structured-output reliability.** OpenAI JSON mode helps but isn't 100%. Need a retry-on-parse-fail strategy (one retry with a "your last response wasn't valid JSON, return only the schema" follow-up). Hard fail to user only after retry also fails.
+- **Secret storage is softer than native.** WebCrypto-over-IndexedDB protects the key at rest but a stolen *unlocked* phone (or a compromised browser) can reach it. Acceptable at single-household scale; revisit if Spruce ever holds higher-value keys or opens up.
+- **Service worker caching footguns.** Stale-app bugs from over-aggressive SW caching are the classic PWA trap. Use `vite-plugin-pwa` auto-update with a clear update flow; keep API calls network-first, never cache Worker responses.
+- **iOS PWA limitations.** If we ever care about iOS: Safari throttles background work, has stricter storage eviction, and weaker install ergonomics. Out of scope now (Android target) but noted.
+- **LLM structured-output reliability.** OpenAI JSON mode helps but isn't 100%. Retry-on-parse-fail (one retry with a "return only the schema" follow-up), hard fail to user only after retry also fails.
+- **Prompt extraction.** A web client is fully inspectable — all the more reason the system prompts stay server-side in the Worker, full stop.
 - **Cycle 2 image gen quality.** Image-to-image with structure preservation is uneven on `gpt-image-1` as of mid-2026. Mitigation: framed as inspirational rendering, fallback plan in Cycle 2 description if quality falls short.
-- **Expo's managed workflow ceiling.** If we ever need a native module Expo doesn't have (rare), we'd eject — cost is real. None of the Cycle 1-4 features need this.
+- **Camera/upload on mobile web.** Large phone photos need client-side downscale/compress before upload to keep latency and token cost sane. Build this into the capture flow from day one.
 
 ## Workflow notes
 
-- **Dev loop:** `npx expo start` at the repo root. Use Expo Go on her Android phone (or yours, or an Android emulator) for fast iteration. Expo Go is for development only. On Linux dev box, mirror a real Android device into a window via `scrcpy` over USB or Wi-Fi ADB.
-- **Cycle ship gate:** **Play Store internal-testing-track build via EAS**, not Expo Go. Real package name, real app icon, real splash, signed AAB. This is what she actually keeps using and what defines "shipped."
-- **Workers proxy dev:** `wrangler dev` for local, `wrangler deploy` for prod. Free tier handles personal use; a Cloudflare account is needed.
-- **Prompt-testing strategy:** A golden-test file at `apps/proxy/test/golden/` with 5-10 anonymized yard photos + expected JSON shape (vibe present, key_changes is non-empty array, items have search_terms, etc.). Run before any prompt change via `pnpm test:golden`. Catches schema regressions cheaply. Outputs are scored by shape + presence, not literal-equality (the LLM will vary in wording).
-- **Not a `launch`-able project in the team-of-3-Smiths sense.** Expo's dev model (one packager + device/simulator) doesn't fit the 3-Smiths-sharing-a-dev-server pattern. Single Smith at a time on this repo.
-- **`.smith.json`** will still get dropped via `smith-init` for consistency, but `launch` won't be used.
+- **Dev loop:** `npm run dev` (Vite) at the repo root — instant HMR in a desktop browser with real keyboard + DevTools. Test mobile layout via responsive mode and a real phone on the LAN dev URL.
+- **PWA verification:** Lighthouse PWA audit + install test on a real Android device. `tests/verify-ui.mjs` Playwright pattern (desktop + `iPhone 13` mobile context) per the validated stack.
+- **Workers proxy dev:** `wrangler dev` for local, `wrangler deploy` for prod. Free tier handles personal use.
+- **Cycle ship gate:** **Cloudflare Pages production deploy** reachable on her phone, installed via Add-to-Home-Screen. That's "shipped."
+- **Prompt-testing strategy:** golden-test file with 5-10 anonymized yard photos + expected JSON shape (vibe present, key_changes non-empty, items have search_terms). Run before any prompt change. Outputs scored by shape + presence, not literal-equality.
+- **Launch-able like any web project** — `smith-init` + `launch` work normally now (shared Vite dev server + Chrome app window). The native single-Smith / emulator caveat is retired.
 
 ---
-*Created 2026-06-21. Private ops log: `~/montressor-private/claude/project-logs/spruce/log.md`*
+*Created 2026-06-21. Pivoted native → PWA 2026-06-30. Private ops log: `~/avengers/claude/project-logs/spruce/log.md`*
