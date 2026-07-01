@@ -30,6 +30,7 @@ export const PlanPatchSchema = z.object({
   addedItems: z.array(PlanItemSchema).optional(),
   removedItemNames: z.array(z.string()).optional(),
   updatedVibe: z.string().min(20).max(400).optional(),
+  updatedVisionSummary: z.string().min(50).max(1500).optional(),
 });
 export type PlanPatch = z.infer<typeof PlanPatchSchema>;
 

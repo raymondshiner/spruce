@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 
 import { Button, Card, Label, Screen } from '@/components/ui';
+import { useInstallPrompt } from '@/shared/lib/install-prompt';
 import { useSession } from '@/shared/state/session';
 
 function maskKey(key: string | null): string {
@@ -12,6 +13,7 @@ function maskKey(key: string | null): string {
 export default function Settings() {
   const navigate = useNavigate();
   const session = useSession();
+  const { canInstall, promptInstall } = useInstallPrompt();
 
   const onReset = async () => {
     if (!window.confirm('Reset Spruce? This clears your API key, zone, and device token. Projects are kept.')) {
@@ -22,8 +24,20 @@ export default function Settings() {
   };
 
   return (
-    <Screen title="Settings" onBack={() => navigate(-1)}>
+    <Screen title="Settings" onBack={() => navigate(-1)} padBottom>
       <div className="flex flex-col gap-4 p-4">
+        {canInstall && (
+          <Card className="flex items-center justify-between gap-3">
+            <div>
+              <Label>Install</Label>
+              <p className="mt-1 text-[13px] text-ink-subtle">Add Spruce to your home screen.</p>
+            </div>
+            <Button className="px-4 py-2 text-sm" onClick={promptInstall}>
+              Install
+            </Button>
+          </Card>
+        )}
+
         <Card className="flex flex-col gap-2">
           <Label>OpenAI API key</Label>
           <p className="text-base font-medium">{maskKey(session.openaiApiKey)}</p>

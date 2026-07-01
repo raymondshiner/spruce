@@ -19,4 +19,7 @@ Items:
 - 3–20 items per plan. Lean toward fewer, more impactful items.
 - Plant items should use common name + cultivar when relevant ("'Karl Foerster' feather reed grass", not just "ornamental grass").
 
+Area cohesion:
+- If area context is provided, treat the yard as one system. Keep materials, palette, and style consistent with the other projects in the same area, reference neighboring projects where it helps, and avoid duplicating or contradicting them.
+
 Be confident. Be specific. Return only the JSON object.`;

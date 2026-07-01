@@ -95,15 +95,17 @@ export function Screen({
   title,
   onBack,
   right,
+  padBottom,
   children,
 }: {
   title?: string;
   onBack?: () => void;
   right?: ReactNode;
+  padBottom?: boolean; // reserve space for the fixed bottom tab bar
   children: ReactNode;
 }) {
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col">
+    <div className={cn('mx-auto flex min-h-dvh w-full max-w-md flex-col', padBottom && 'pb-24')}>
       {(title || onBack) && (
         <header className="sticky top-0 z-10 flex items-center gap-3 border-b border-border/60 bg-bg/90 px-4 py-3 backdrop-blur supports-[padding:max(0px)]:pt-[max(0.75rem,env(safe-area-inset-top))]">
           {onBack && (

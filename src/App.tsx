@@ -1,14 +1,19 @@
 import { useEffect } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 
+import AppShell from '@/components/AppShell';
 import { Spinner } from '@/components/ui';
+import { useAreas } from '@/shared/state/areas';
 import { useProjects } from '@/shared/state/projects';
 import { isOnboarded, useSession } from '@/shared/state/session';
 import OnboardingKey from '@/screens/OnboardingKey';
 import OnboardingZone from '@/screens/OnboardingZone';
-import ProjectList from '@/screens/ProjectList';
+import Areas from '@/screens/Areas';
+import AreaDetail from '@/screens/AreaDetail';
+import AreaEdit from '@/screens/AreaEdit';
 import Capture from '@/screens/Capture';
 import ProjectDetail from '@/screens/ProjectDetail';
+import ProjectEdit from '@/screens/ProjectEdit';
 import Settings from '@/screens/Settings';
 
 function FullScreenSpinner() {
@@ -30,6 +35,7 @@ function RequireOnboarded({ children }: { children: React.ReactNode }) {
 export default function App() {
   const hydrateSession = useSession((s) => s.hydrate);
   const hydrateProjects = useProjects((s) => s.hydrate);
+  const hydrateAreas = useAreas((s) => s.hydrate);
   const hydrated = useSession((s) => s.hydrated);
   const session = useSession();
   const location = useLocation();
@@ -37,7 +43,8 @@ export default function App() {
   useEffect(() => {
     hydrateSession();
     hydrateProjects();
-  }, [hydrateSession, hydrateProjects]);
+    hydrateAreas();
+  }, [hydrateSession, hydrateProjects, hydrateAreas]);
 
   if (!hydrated) return <FullScreenSpinner />;
 
@@ -48,38 +55,24 @@ export default function App() {
         element={<OnboardingKey firstRun={!isOnboarded(session)} />}
       />
       <Route path="/onboarding/zone" element={<OnboardingZone />} />
+
       <Route
-        path="/"
         element={
           <RequireOnboarded>
-            <ProjectList />
+            <AppShell />
           </RequireOnboarded>
         }
-      />
-      <Route
-        path="/capture"
-        element={
-          <RequireOnboarded>
-            <Capture />
-          </RequireOnboarded>
-        }
-      />
-      <Route
-        path="/project/:id"
-        element={
-          <RequireOnboarded>
-            <ProjectDetail />
-          </RequireOnboarded>
-        }
-      />
-      <Route
-        path="/settings"
-        element={
-          <RequireOnboarded>
-            <Settings />
-          </RequireOnboarded>
-        }
-      />
+      >
+        <Route path="/" element={<Areas />} />
+        <Route path="/area/new" element={<AreaEdit />} />
+        <Route path="/area/:id" element={<AreaDetail />} />
+        <Route path="/area/:id/edit" element={<AreaEdit />} />
+        <Route path="/capture" element={<Capture />} />
+        <Route path="/project/:id" element={<ProjectDetail />} />
+        <Route path="/project/:id/edit" element={<ProjectEdit />} />
+        <Route path="/settings" element={<Settings />} />
+      </Route>
+
       <Route path="*" element={<Navigate to="/" replace state={{ from: location.pathname }} />} />
     </Routes>
   );

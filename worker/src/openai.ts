@@ -1,6 +1,9 @@
 import { errorResponse } from './http';
 
 const CHAT_URL = 'https://api.openai.com/v1/chat/completions';
+const IMAGE_EDIT_URL = 'https://api.openai.com/v1/images/edits';
+const IMAGE_GEN_URL = 'https://api.openai.com/v1/images/generations';
+const IMAGE_MODEL = 'gpt-image-1';
 
 export type ChatMessage =
   | { role: 'system' | 'user' | 'assistant'; content: string }
@@ -78,6 +81,69 @@ export async function callOpenAI(
       completionTokens: data.usage?.completion_tokens,
     },
   };
+}
+
+function statusToFailure(status: number): OpenAIFailure {
+  if (status === 401) return { kind: 'invalid_key', status: 401 };
+  if (status === 429) return { kind: 'quota', status: 429 };
+  return { kind: 'upstream', status };
+}
+
+function base64ToBytes(base64: string): Uint8Array {
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+export type ImageArgs =
+  | { mode: 'edit'; apiKey: string; prompt: string; imageBase64: string; size?: string }
+  | { mode: 'generate'; apiKey: string; prompt: string; size?: string };
+
+// gpt-image-1 image generation. `edit` runs images/edits over the user's photo (before/after
+// render); `generate` runs images/generations (top-down layout diagram). Both return base64.
+export async function callOpenAIImage(
+  args: ImageArgs,
+): Promise<{ ok: true; result: { imageBase64: string } } | { ok: false; failure: OpenAIFailure }> {
+  const size = args.size ?? '1024x1024';
+  let res: Response;
+  try {
+    if (args.mode === 'edit') {
+      const form = new FormData();
+      form.append('model', IMAGE_MODEL);
+      form.append('prompt', args.prompt);
+      form.append('size', size);
+      form.append('n', '1');
+      form.append(
+        'image',
+        new Blob([base64ToBytes(args.imageBase64)], { type: 'image/jpeg' }),
+        'photo.jpg',
+      );
+      res = await fetch(IMAGE_EDIT_URL, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${args.apiKey}` },
+        body: form,
+      });
+    } else {
+      res = await fetch(IMAGE_GEN_URL, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${args.apiKey}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ model: IMAGE_MODEL, prompt: args.prompt, size, n: 1 }),
+      });
+    }
+  } catch {
+    return { ok: false, failure: { kind: 'upstream', status: 502 } };
+  }
+
+  if (!res.ok) return { ok: false, failure: statusToFailure(res.status) };
+
+  const data = (await res.json()) as { data?: Array<{ b64_json?: string }> };
+  const imageBase64 = data.data?.[0]?.b64_json;
+  if (!imageBase64) return { ok: false, failure: { kind: 'upstream', status: 502 } };
+  return { ok: true, result: { imageBase64 } };
 }
 
 export function failureToResponse(f: OpenAIFailure): Response {

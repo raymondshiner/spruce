@@ -4,6 +4,7 @@ import zodToJsonSchema from 'zod-to-json-schema';
 import { errorResponse, jsonResponse } from '../http';
 import { callOpenAI, failureToResponse, type ChatMessage } from '../openai';
 import { YARD_SYSTEM_PROMPT } from '../prompts/yard';
+import { AreaContextSchema, renderAreaContext } from '../prompts/area-context';
 import {
   FollowupReplySchema,
   PlanSchema,
@@ -20,6 +21,7 @@ const PlanRequestSchema = z.object({
   goal: z.string().min(1).max(500),
   photoBase64: z.string().min(100),
   openaiApiKey: z.string().min(10),
+  areaContext: AreaContextSchema.optional(),
 });
 
 const FollowupRequestSchema = z.object({
@@ -36,6 +38,16 @@ const FollowupRequestSchema = z.object({
   ),
   question: z.string().min(1).max(2000),
   openaiApiKey: z.string().min(10),
+  areaContext: AreaContextSchema.optional(),
+  images: z
+    .array(
+      z.object({
+        base64: z.string().min(100),
+        role: z.enum(['reference', 'detail']),
+      }),
+    )
+    .max(4)
+    .optional(),
 });
 
 function planJsonSchema(): Record<string, unknown> {
@@ -67,11 +79,12 @@ export async function handlePlan(req: Request, env: Env): Promise<Response> {
   }
   const parsed = PlanRequestSchema.safeParse(raw);
   if (!parsed.success) return errorResponse(400, 'bad_request');
-  const { goal, zone, photoBase64, openaiApiKey } = parsed.data;
+  const { goal, zone, photoBase64, openaiApiKey, areaContext } = parsed.data;
 
   const zoneLine = zone && zone !== 'unknown' ? `User USDA zone: ${zone}.` : 'User USDA zone: unknown.';
   const messages: ChatMessage[] = [
     { role: 'system', content: YARD_SYSTEM_PROMPT },
+    ...(areaContext ? [{ role: 'system' as const, content: renderAreaContext(areaContext) }] : []),
     {
       role: 'user',
       content: [
@@ -124,16 +137,40 @@ export async function handleFollowup(req: Request, env: Env): Promise<Response> 
   }
   const parsed = FollowupRequestSchema.safeParse(raw);
   if (!parsed.success) return errorResponse(400, 'bad_request');
-  const { zone, visionSummary, plan, turns, question, openaiApiKey } = parsed.data;
+  const { zone, visionSummary, plan, turns, question, openaiApiKey, areaContext, images } = parsed.data;
 
   const zoneLine = zone && zone !== 'unknown' ? `USDA zone: ${zone}.` : 'USDA zone unknown.';
   const context = `${zoneLine}\n\nWhat you saw in the original photo: ${visionSummary}\n\nThe current plan: ${JSON.stringify(plan)}`;
 
+  // When the user attaches photos this turn, send a multimodal user message. A 'detail'
+  // photo is a closer look at the space (refine accordingly); a 'reference' photo is
+  // inspiration to match. If a detail photo changes your spatial understanding, return an
+  // updatedVisionSummary in the planPatch so later turns retain it.
+  const userMessage: ChatMessage = images && images.length
+    ? {
+        role: 'user',
+        content: [
+          { type: 'text', text: question },
+          ...images.map((img) => ({
+            type: 'text' as const,
+            text: img.role === 'reference'
+              ? 'The image below is a reference/inspiration idea to match the vibe of.'
+              : 'The image below is a closer look at the actual space — refine the plan accordingly.',
+          })),
+          ...images.map((img) => ({
+            type: 'image_url' as const,
+            image_url: { url: `data:image/jpeg;base64,${img.base64}` },
+          })),
+        ],
+      }
+    : { role: 'user', content: question };
+
   const messages: ChatMessage[] = [
     { role: 'system', content: YARD_SYSTEM_PROMPT },
+    ...(areaContext ? [{ role: 'system' as const, content: renderAreaContext(areaContext) }] : []),
     { role: 'system', content: context },
     ...turns.map((t) => ({ role: t.role, content: t.content })),
-    { role: 'user', content: question },
+    userMessage,
   ];
 
   let result = await callOpenAI({

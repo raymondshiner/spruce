@@ -10,12 +10,31 @@ export type RegisterResponse = {
   deviceSecret: string;
 };
 
+export type AreaProjectSummary = {
+  title: string;
+  vibe: string;
+  keyChanges: string[];
+  visionSummary?: string;
+};
+
+export type AreaContext = {
+  areaName: string;
+  areaNotes: string;
+  siblings: AreaProjectSummary[];
+};
+
+export type FollowupImage = {
+  base64: string;
+  role: 'reference' | 'detail';
+};
+
 export type PlanRequest = {
   mode: Mode;
   zone?: string;
   goal: string;
   photoBase64: string;
   openaiApiKey: string;
+  areaContext?: AreaContext;
 };
 
 export type PlanResponse = Plan;
@@ -28,14 +47,17 @@ export type FollowupRequest = {
   turns: ChatTurn[];
   question: string;
   openaiApiKey: string;
+  areaContext?: AreaContext;
+  images?: FollowupImage[];
 };
 
 export type FollowupResponse = FollowupReply;
 
 export type VisualizeRequest = {
   mode: Mode;
+  kind: 'render' | 'layout';
   plan: Plan;
-  photoBase64: string;
+  photoBase64?: string; // required when kind === 'render'
   openaiApiKey: string;
 };
 

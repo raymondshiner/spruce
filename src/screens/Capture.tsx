@@ -1,17 +1,23 @@
 import { useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ulid } from 'ulid';
 
 import { Button, Screen, Textarea } from '@/components/ui';
 import { generatePlan, SpruceApiError } from '@/shared/api/client';
 import { PlanSchema } from '@/shared/schema/plan';
+import { buildAreaContext } from '@/shared/lib/area-context';
 import { preparePhoto, type PreparedPhoto } from '@/shared/lib/image';
+import { useAreas } from '@/shared/state/areas';
 import { useProjects } from '@/shared/state/projects';
 import { useSession } from '@/shared/state/session';
+import { UNASSIGNED_AREA_ID } from '@/shared/types/area';
 import type { Project } from '@/shared/types/project';
 
 export default function Capture() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const areaId = params.get('area') ?? UNASSIGNED_AREA_ID;
+  const area = useAreas((s) => s.byId[areaId]);
   const session = useSession();
   const saveProject = useProjects((s) => s.save);
   const cameraInput = useRef<HTMLInputElement>(null);
@@ -41,12 +47,19 @@ export default function Capture() {
     setError(null);
     try {
       const device = await session.ensureDeviceRegistered();
+      const areaContext = buildAreaContext(
+        areaId,
+        null,
+        useAreas.getState().byId,
+        Object.values(useProjects.getState().byId),
+      );
       const raw = await generatePlan(device, {
         mode: 'yard',
         zone: session.zone,
         goal: goal.trim(),
         photoBase64: photo.base64,
         openaiApiKey: session.openaiApiKey,
+        areaContext,
       });
       const parsed = PlanSchema.safeParse(raw);
       if (!parsed.success) {
@@ -60,6 +73,8 @@ export default function Capture() {
         createdAt: now,
         updatedAt: now,
         mode: 'yard',
+        areaId,
+        title: '',
         thumbnailUri: photo.dataUrl,
         photoSha256: photo.sha256,
         zone: session.zone,
@@ -79,7 +94,10 @@ export default function Capture() {
   };
 
   return (
-    <Screen title="New project" onBack={() => navigate(-1)}>
+    <Screen
+      title={area && areaId !== UNASSIGNED_AREA_ID ? `New project · ${area.name}` : 'New project'}
+      onBack={() => navigate(-1)}
+    >
       <div className="flex flex-1 flex-col gap-4 p-5">
         {photo ? (
           <img
