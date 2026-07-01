@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useShallow } from 'zustand/react/shallow';
 
 import { Button, Input, Label, Screen, Spinner } from '@/components/ui';
 import { cn } from '@/lib/cn';
@@ -14,7 +15,7 @@ export default function ProjectEdit() {
   const hydrated = useProjects((s) => s.hydrated);
   const save = useProjects((s) => s.save);
   const remove = useProjects((s) => s.remove);
-  const topLevel = useAreas(selectTopLevelAreas);
+  const topLevel = useAreas(useShallow(selectTopLevelAreas));
   const areasById = useAreas((s) => s.byId);
 
   const [title, setTitle] = useState(project?.title ?? '');

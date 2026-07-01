@@ -42,10 +42,11 @@ export async function callOpenAI(
     max_tokens: args.maxTokens ?? 2000,
   };
   if (args.jsonSchema) {
-    body.response_format = {
-      type: 'json_schema',
-      json_schema: { ...args.jsonSchema, strict: true },
-    };
+    // json_object (not strict json_schema): the system prompt + per-route output contract
+    // specify the shape, and zod validation + a retry guard the result. Strict json_schema
+    // built from zod-to-json-schema fails OpenAI's structured-output rules (every object needs
+    // additionalProperties:false and all keys required) and 400s on our optional fields.
+    body.response_format = { type: 'json_object' };
   }
 
   let res: Response;

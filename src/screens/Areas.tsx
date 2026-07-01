@@ -1,4 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom';
+import { useShallow } from 'zustand/react/shallow';
 
 import InstallBanner from '@/components/InstallBanner';
 import { Screen } from '@/components/ui';
@@ -7,7 +8,7 @@ import { useProjects } from '@/shared/state/projects';
 
 export default function Areas() {
   const navigate = useNavigate();
-  const areas = useAreas(selectTopLevelAreas);
+  const areas = useAreas(useShallow(selectTopLevelAreas));
   const areasById = useAreas((s) => s.byId);
   const projects = useProjects((s) => s.byId);
 

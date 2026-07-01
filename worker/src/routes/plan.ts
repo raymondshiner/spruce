@@ -58,6 +58,36 @@ function followupJsonSchema(): Record<string, unknown> {
   return zodToJsonSchema(FollowupReplySchema, { name: 'followup' }) as Record<string, unknown>;
 }
 
+// Exact key contract — json_object mode doesn't pin key names, so spell them out.
+const PLAN_OUTPUT_CONTRACT = `Return ONLY a JSON object with EXACTLY these keys, in camelCase, and no others:
+{
+  "visionSummary": string (200-1500 chars; your private memory of the photo),
+  "vibe": string (20-400 chars; one or two sentences shown to the user),
+  "keyChanges": string[] (2 to 7 entries, each 10-300 chars),
+  "items": [
+    {
+      "name": string (1-80 chars),
+      "category": one of "plant" | "hardscape" | "furniture" | "lighting" | "decor",
+      "searchTerms": string (3-120 chars; an Amazon-style search query),
+      "estimatedPriceRange": string (OPTIONAL, e.g. "$20-50"),
+      "notes": string (OPTIONAL, <=280 chars)
+    }
+  ] (3 to 20 items)
+}
+No markdown, no code fences, no commentary — just the JSON object.`;
+
+const FOLLOWUP_OUTPUT_CONTRACT = `Return ONLY a JSON object with EXACTLY these keys, in camelCase:
+{
+  "reply": string (1-2000 chars; the answer to the user, markdown allowed),
+  "planPatch": {           // OPTIONAL — include only when you are changing the plan
+    "addedItems": [ { "name", "category", "searchTerms", "estimatedPriceRange"?, "notes"? } ],
+    "removedItemNames": string[],
+    "updatedVibe": string (20-400 chars),
+    "updatedVisionSummary": string (OPTIONAL; only if a detail photo changed your understanding)
+  }
+}
+No markdown fences around the JSON — just the object.`;
+
 async function tryParse<T>(
   content: string,
   schema: { safeParse: (x: unknown) => { success: true; data: T } | { success: false } },
@@ -84,6 +114,7 @@ export async function handlePlan(req: Request, env: Env): Promise<Response> {
   const zoneLine = zone && zone !== 'unknown' ? `User USDA zone: ${zone}.` : 'User USDA zone: unknown.';
   const messages: ChatMessage[] = [
     { role: 'system', content: YARD_SYSTEM_PROMPT },
+    { role: 'system', content: PLAN_OUTPUT_CONTRACT },
     ...(areaContext ? [{ role: 'system' as const, content: renderAreaContext(areaContext) }] : []),
     {
       role: 'user',
@@ -167,6 +198,7 @@ export async function handleFollowup(req: Request, env: Env): Promise<Response> 
 
   const messages: ChatMessage[] = [
     { role: 'system', content: YARD_SYSTEM_PROMPT },
+    { role: 'system', content: FOLLOWUP_OUTPUT_CONTRACT },
     ...(areaContext ? [{ role: 'system' as const, content: renderAreaContext(areaContext) }] : []),
     { role: 'system', content: context },
     ...turns.map((t) => ({ role: t.role, content: t.content })),
